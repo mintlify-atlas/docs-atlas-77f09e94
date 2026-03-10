@@ -1,0 +1,97 @@
+---
+title: Commands Overview
+description: Complete reference of all available commands in the Price Tracker Bot
+---
+
+## Available Commands
+
+The Price Tracker Bot provides a comprehensive set of commands to monitor Amazon product prices, receive notifications, and analyze price history.
+
+<CardGroup cols={2}>
+  <Card title="/add" icon="plus" href="/commands/add">
+    Add a new Amazon product to your tracking list
+  </Card>
+  <Card title="/list" icon="list" href="/commands/list">
+    View all products currently being tracked
+  </Card>
+  <Card title="/check" icon="refresh" href="/commands/check">
+    Manually trigger a price check for all products
+  </Card>
+  <Card title="/remove" icon="trash" href="/commands/remove">
+    Remove a product from your tracking list
+  </Card>
+  <Card title="/edit" icon="pen" href="/commands/edit">
+    Update the URL of a tracked product
+  </Card>
+  <Card title="/stats" icon="chart-bar" href="/commands/stats">
+    View tracking statistics and potential savings
+  </Card>
+  <Card title="/chart" icon="chart-line" href="/commands/chart">
+    Generate a price history chart for a product
+  </Card>
+</CardGroup>
+
+## Quick Start Commands
+
+<CodeGroup>
+```bash /start
+/start
+```
+
+```bash /help
+/help
+```
+</CodeGroup>
+
+### /start
+Initializes the bot and registers your chat for price notifications. Shows a welcome message with all available commands.
+
+### /help
+Displays a quick reference guide of all available commands.
+
+## Command Categories
+
+### Product Management
+- **[/add](/commands/add)** - Add products to tracking
+- **[/list](/commands/list)** - View tracked products
+- **[/remove](/commands/remove)** - Remove products
+- **[/edit](/commands/edit)** - Update product URLs
+
+### Price Monitoring
+- **[/check](/commands/check)** - Trigger manual price checks
+- **[/stats](/commands/stats)** - View savings statistics
+- **[/chart](/commands/chart)** - Visualize price history
+
+## Automatic Features
+
+<Note>
+The bot automatically checks prices every 2 hours and sends you notifications when it detects price drops.
+</Note>
+
+### Scheduled Operations
+
+| Feature | Schedule | Description |
+|---------|----------|-------------|
+| Price Checks | Every 2 hours | Automatically scrapes all tracked products |
+| Daily Summary | 8:00 PM | Sends a summary of all tracked products |
+| Notifications | Real-time | Instant alerts when prices drop |
+
+## Data Tracked
+
+For each product, the bot monitors:
+- **Current Price** - Latest scraped price
+- **Lowest Price** - Historical minimum price seen
+- **Price History** - Complete price timeline (last 120 entries)
+- **Product Details** - Title, image, and Amazon URL
+- **Metadata** - Date added, last checked timestamp
+
+## Getting Started
+
+1. Start a conversation with the bot: `/start`
+2. Add your first product: `/add https://amazon.com/...`
+3. View your products: `/list`
+4. Wait for price drop notifications or manually check: `/check`
+
+<Tip>
+Use `/chart` to visualize price trends and identify the best time to buy!
+</Tip>

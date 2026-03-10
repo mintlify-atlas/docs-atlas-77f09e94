@@ -1,0 +1,492 @@
+---
+title: FAQ
+description: Frequently asked questions about Price Tracker Bot
+---
+
+## General Questions
+
+<AccordionGroup>
+  <Accordion title="How often are prices checked?">
+    The bot automatically checks all tracked product prices **every 2 hours**.
+
+    This is configured using a cron job at index.mjs:733:
+    ```javascript
+    cron.schedule("0 */2 * * *", async () => {
+      await checkPrices();
+    });
+    ```
+
+    **Schedule breakdown:**
+    - `0` - At minute 0
+    - `*/2` - Every 2 hours
+    - `* * *` - Every day, month, day of week
+
+    **You can also:**
+    - Trigger manual checks using `/check` command
+    - The bot checks prices when you first add a product
+
+    <Tip>
+      Automatic checks run even when you're not actively using the bot, as long as the process is running.
+    </Tip>
+  </Accordion>
+
+  <Accordion title="What Amazon regions are supported?">
+    The bot works with **any Amazon domain** including:
+
+    - 🇺🇸 Amazon.com (United States)
+    - 🇲🇽 Amazon.com.mx (Mexico)
+    - 🇬🇧 Amazon.co.uk (United Kingdom)
+    - 🇩🇪 Amazon.de (Germany)
+    - 🇫🇷 Amazon.fr (France)
+    - 🇮🇹 Amazon.it (Italy)
+    - 🇪🇸 Amazon.es (Spain)
+    - 🇯🇵 Amazon.co.jp (Japan)
+    - 🇨🇦 Amazon.ca (Canada)
+    - 🇦🇺 Amazon.com.au (Australia)
+    - And any other Amazon regional site
+
+    **How it works:**
+
+    The bot uses the URL you provide without restrictions on domain (index.mjs:53-61):
+    ```javascript
+    function sanitizeAmazonURL(url) {
+      const u = new URL(url);
+      return u.origin + u.pathname; // Preserves domain
+    }
+    ```
+
+    <Note>
+      The bot extracts prices by looking for common Amazon CSS selectors that work across regions. However, some regional sites may have different page structures.
+    </Note>
+
+    **Regional considerations:**
+    - Currency symbols are preserved from the page
+    - Product titles appear in the site's language
+    - Price parsing removes non-numeric characters (index.mjs:128)
+  </Accordion>
+
+  <Accordion title="How much price history is kept?">
+    The bot stores up to **120 price history entries** per product.
+
+    This limit is defined at index.mjs:69:
+    ```javascript
+    const HISTORY_LIMIT = 120;
+    ```
+
+    **How history works:**
+
+    1. **Recording**: Every price check adds a new entry (index.mjs:195)
+    2. **Trimming**: If history exceeds 120 entries, oldest entries are removed (index.mjs:196)
+    3. **Storage**: History is saved in `prices.json` with timestamps
+
+    **Timeline calculation:**
+    - 120 entries × 2 hours = 240 hours
+    - **≈ 10 days** of continuous tracking
+
+    <Tip>
+      History is used to generate price charts with the `/chart` command.
+    </Tip>
+
+    **History format** in `prices.json`:
+    ```json
+    {
+      "history": [
+        { "date": "2026-03-01T10:00:00.000Z", "price": 299.99 },
+        { "date": "2026-03-01T12:00:00.000Z", "price": 289.99 },
+        { "date": "2026-03-01T14:00:00.000Z", "price": 289.99 }
+      ]
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Can I track non-Amazon products?">
+    **No**, the bot is specifically designed for Amazon products only.
+
+    **Why Amazon-only?**
+
+    The scraper uses Amazon-specific CSS selectors (index.mjs:73-136):
+
+    **Title selectors:**
+    ```javascript
+    const selectors = [
+      "#productTitle",
+      "h1#title",
+      "h1.a-size-large",
+      'h1[data-automation-id="product-title"]',
+      ".product-title"
+    ];
+    ```
+
+    **Price selectors:**
+    ```javascript
+    const selectors = [
+      "span.a-price .a-offscreen",
+      "span#priceblock_ourprice",
+      "span#priceblock_dealprice",
+      "div#corePrice_feature_div span.a-offscreen"
+    ];
+    ```
+
+    These selectors are unique to Amazon's HTML structure and won't work on other e-commerce sites.
+
+    <Warning>
+      Attempting to track non-Amazon URLs will result in errors like "Título no encontrado" or "Precio inválido".
+    </Warning>
+
+    **Alternative for other sites:**
+    - Modify the CSS selectors in `scrapeProduct()` function
+    - Add conditional logic for different domains
+    - Test thoroughly with the target site
+  </Accordion>
+
+  <Accordion title="How are prices compared?">
+    The bot uses a simple but effective comparison system:
+
+    ### Price Storage
+
+    Each product stores (index.mjs:182-192):
+    - `price` - Current/most recent price
+    - `lowestPrice` - Lowest price ever seen
+    - `history` - Array of all price checks
+
+    ### Comparison Logic
+
+    **When checking prices** (index.mjs:199):
+    ```javascript
+    if (scraped.price < originalPrice) {
+      // Price dropped - send notification
+    }
+    ```
+
+    **Notification includes** (index.mjs:200-204):
+    - Previous price (`originalPrice`)
+    - New current price (`scraped.price`)
+    - Savings amount (dollar difference)
+    - Savings percentage
+    - Historical lowest price
+
+    ### Example Scenario
+
+    1. **Product added:** $299.99
+       - `price = 299.99`
+       - `lowestPrice = 299.99`
+
+    2. **First check (2 hours later):** $289.99
+       - `scraped.price (289.99) < originalPrice (299.99)` ✅
+       - **Notification sent:** "¡Precio reducido! $10.00 (3.3% menos)"
+       - `price = 289.99`
+       - `lowestPrice = 289.99`
+
+    3. **Second check (4 hours later):** $289.99
+       - `scraped.price (289.99) < originalPrice (289.99)` ❌
+       - **No notification** (price unchanged)
+
+    4. **Third check (6 hours later):** $309.99
+       - `scraped.price (309.99) < originalPrice (289.99)` ❌
+       - **No notification** (price increased)
+       - `price = 309.99`
+       - `lowestPrice = 289.99` (unchanged)
+
+    5. **Fourth check (8 hours later):** $279.99
+       - `scraped.price (279.99) < originalPrice (309.99)` ✅
+       - **Notification sent:** "¡Precio reducido! $30.00 (9.7% menos)"
+       - Also shows lowest: $279.99
+
+    <Note>
+      The bot **only notifies on price decreases**, never on increases. This prevents notification fatigue.
+    </Note>
+  </Accordion>
+
+  <Accordion title="What data is stored about my products?">
+    All product data is stored locally in `prices.json` (index.mjs:20).
+
+    **Product data structure:**
+    ```json
+    {
+      "url": "https://amazon.com/dp/B08N5WRWNW",
+      "title": "Product Name",
+      "price": 299.99,
+      "lowestPrice": 279.99,
+      "imageUrl": "https://...",
+      "addedDate": "2026-03-01T10:00:00.000Z",
+      "addedBy": 123456789,
+      "lastChecked": "2026-03-10T14:00:00.000Z",
+      "history": [
+        { "date": "2026-03-01T10:00:00.000Z", "price": 299.99 }
+      ]
+    }
+    ```
+
+    **Fields explained:**
+    - `url` - Sanitized product URL (without query params)
+    - `title` - Product name from Amazon
+    - `price` - Most recent price
+    - `lowestPrice` - Minimum price ever recorded
+    - `imageUrl` - Product image for notifications
+    - `addedDate` - When you first added the product
+    - `addedBy` - Your Telegram chat ID
+    - `lastChecked` - Last time price was scraped
+    - `history` - Up to 120 price/date pairs
+
+    **Privacy:**
+    - All data stored **locally on your server**
+    - No data sent to external services (except Amazon for scraping)
+    - Chat IDs stored only for notifications
+
+    <Tip>
+      You can view the raw data anytime by opening `prices.json` in a text editor.
+    </Tip>
+  </Accordion>
+
+  <Accordion title="Can multiple users track the same product?">
+    **Yes**, but with current architecture, products are shared globally.
+
+    **How it works:**
+
+    - Products are stored by **URL** as the key (index.mjs:21)
+    - If User A adds a product, User B sees the same product
+    - All registered chats receive notifications for all products (index.mjs:223)
+
+    **Example:**
+    1. User A adds `amazon.com/dp/B08N5WRWNW`
+    2. User B tries to add the same URL
+    3. Bot responds: `⚠️ Este producto ya está en seguimiento` (index.mjs:404-405)
+
+    <Warning>
+      This design means the bot is best suited for **single-user or trusted group use**.
+    </Warning>
+
+    **Notifications:**
+    - Price drops notify **all registered chats** (index.mjs:223-244)
+    - Chat registration happens automatically on first message (index.mjs:705-712)
+
+    **For multi-user scenarios:**
+    - Consider running separate bot instances per user
+    - Or modify the code to associate products with specific chat IDs
+  </Accordion>
+
+  <Accordion title="What happens if Amazon blocks the bot?">
+    Amazon may occasionally block or challenge automated requests.
+
+    **Bot behavior on blocking:**
+
+    1. **Error logged** (index.mjs:165-166):
+       ```
+       Error en [Product]: Título no encontrado
+       ```
+
+    2. **Continues checking other products** (index.mjs:170-172)
+       - Doesn't stop entire check process
+       - Updates `lastChecked` timestamp
+       - Moves to next product
+
+    3. **Retries on next scheduled check** (2 hours later)
+
+    **Prevention measures built-in:**
+
+    - **Delays between requests**: 800-900ms (index.mjs:78, 214)
+    - **Headless browser**: Appears more like real user
+    - **Reasonable check frequency**: Every 2 hours, not aggressive
+    - **Browser flags**: `--no-sandbox` for compatibility (index.mjs:148)
+
+    <Tip>
+      If consistently blocked, try increasing the delay between checks or reducing the number of tracked products.
+    </Tip>
+
+    **Signs of blocking:**
+    - Multiple consecutive scraping failures
+    - "Título no encontrado" errors
+    - "Precio inválido" errors
+    - Captcha pages (not handled by bot)
+
+    **Solutions:**
+    1. Wait several hours before retrying
+    2. Reduce check frequency (modify cron at index.mjs:733)
+    3. Track fewer products simultaneously
+    4. Use residential proxy (requires code modification)
+  </Accordion>
+
+  <Accordion title="Does the bot work with Amazon deals/lightning deals?">
+    **Partially** - the bot can track deals, but with limitations.
+
+    **What works:**
+    - Tracking current deal prices
+    - Detecting when deal price drops further
+    - Recording deal price in history
+
+    **Limitations:**
+
+    <Warning>
+      The bot **does not** know when a deal expires. It will continue tracking the post-deal price.
+    </Warning>
+
+    **Example scenario:**
+    1. Product normally $100
+    2. Lightning deal: $60 (you add it)
+    3. Bot tracks at $60
+    4. Deal expires, price returns to $100
+    5. Bot sees $100 > $60, no notification sent
+    6. Bot continues tracking at $100
+
+    **Price selectors** used (index.mjs:96-109):
+    ```javascript
+    "span#priceblock_dealprice",  // Catches deal prices
+    "span#priceblock_ourprice",   // Regular price
+    "span.a-price .a-offscreen"   // General price
+    ```
+
+    **Best practices:**
+    - Add products before deals start for better tracking
+    - Use `/chart` to see when deal occurred in history
+    - Manually remove products after deals expire if desired
+  </Accordion>
+
+  <Accordion title="Can I export my price data?">
+    **Yes**, the data is already in JSON format and easy to export.
+
+    **Manual export:**
+
+    1. **Copy the data file:**
+       ```bash
+       cp prices.json my-backup-$(date +%Y%m%d).json
+       ```
+
+    2. **Convert to CSV** (using jq):
+       ```bash
+       jq -r '.products | to_entries[] | [.key, .value.title, .value.price, .value.lowestPrice, .value.lastChecked] | @csv' prices.json > prices.csv
+       ```
+
+    3. **Extract history for specific product:**
+       ```bash
+       jq '.products["YOUR_URL"].history' prices.json > product-history.json
+       ```
+
+    **Programmatic access:**
+
+    The data structure is at index.mjs:21-22:
+    ```javascript
+    let priceData = {};  // keys: sanitizedUrl -> product object
+    let chats = new Set();
+    ```
+
+    **Saved format** (index.mjs:43):
+    ```json
+    {
+      "products": { /* url -> product */ },
+      "chats": [ /* array of chat IDs */ ]
+    }
+    ```
+
+    <Tip>
+      Set up a daily backup cron job to preserve your price history.
+    </Tip>
+  </Accordion>
+</AccordionGroup>
+
+## Command Questions
+
+<AccordionGroup>
+  <Accordion title="What's the difference between /list and /stats?">
+    Both commands show product information, but with different purposes:
+
+    ### `/list` Command (index.mjs:489)
+    - Shows **interactive menu** of all products
+    - Click products to see details
+    - Buttons to delete all or check prices
+    - Best for: **Managing your products**
+
+    ### `/stats` Command (index.mjs:492-517)
+    - Shows **aggregate statistics**:
+      - Total products tracked
+      - Total chats registered
+      - Potential savings detected
+      - Products with price reductions
+    - Best for: **Overview of activity**
+
+    **Example `/stats` output:**
+    ```
+    📊 Estadísticas de seguimiento
+
+    📦 Productos: 5
+    👥 Chats registrados: 2
+    💰 Ahorro potencial detectado: $45.32
+    📉 Productos con precio reducido: 3
+    ```
+  </Accordion>
+
+  <Accordion title="How do I use the /edit command?">
+    The `/edit` command updates a product's URL while preserving history.
+
+    **Syntax:**
+    ```
+    /edit [current_url] [new_url]
+    ```
+
+    **Example:**
+    ```
+    /edit https://amazon.com/dp/OLD123 https://amazon.com/dp/NEW456
+    ```
+
+    **What happens** (index.mjs:545-610):
+    1. Bot scrapes the new URL
+    2. Transfers existing history
+    3. Preserves `addedDate` and `addedBy`
+    4. Keeps `lowestPrice` from both old and new
+    5. Deletes old URL entry
+    6. Creates new URL entry
+
+    **Use cases:**
+    - Product URL changed (Amazon redirects)
+    - Wrong product added by mistake
+    - Variant changed (different size/color)
+
+    <Note>
+      The lowest price is preserved across both URLs, so you won't lose historical minimum pricing.
+    </Note>
+  </Accordion>
+
+  <Accordion title="What does the /chart command show?">
+    The `/chart` command generates a visual price history graph.
+
+    **Usage:**
+    ```
+    /chart [product_url]
+    ```
+
+    **Requirements** (index.mjs:313-314):
+    - At least **2 history entries** (minimum 4 hours of tracking)
+    - Valid product URL that you're tracking
+
+    **Generated chart includes:**
+    - X-axis: Timestamps (date/time)
+    - Y-axis: Price values
+    - Line graph showing price changes over time
+    - Product title as chart title
+
+    **Technical details:**
+    - Generated using Chart.js (index.mjs:268)
+    - Rendered via Playwright browser screenshot (index.mjs:253-307)
+    - Image size: 900×420 pixels (index.mjs:266)
+    - Sent as photo to Telegram
+
+    **Example output:**
+    ```
+    📊 Histórico de precios
+    [Chart image showing price drops over time]
+    Product Name
+    [Ver en Amazon] button
+    ```
+
+    <Tip>
+      Charts are most useful after several days of tracking to see price trends.
+    </Tip>
+  </Accordion>
+</AccordionGroup>
+
+## Need More Help?
+
+If your question isn't answered here:
+
+- Check the [Troubleshooting](/support/troubleshooting) guide for technical issues
+- Review the [Contributing](/support/contributing) guide if you want to extend functionality
+- Open an issue on GitHub with your question

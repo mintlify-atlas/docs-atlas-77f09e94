@@ -1,0 +1,236 @@
+---
+title: /add Command
+description: Add Amazon products to your price tracking list
+---
+
+## Overview
+
+The `/add` command allows you to add Amazon product URLs to your tracking list. The bot will scrape the product information, store the initial price, and begin monitoring for price changes.
+
+## Syntax
+
+```bash
+/add [amazon_url]
+```
+
+<ParamField path="amazon_url" type="string" required>
+  The full Amazon product URL. Must start with `http://` or `https://`
+</ParamField>
+
+## How It Works
+
+When you run `/add`, the bot performs the following steps:
+
+1. **URL Validation** - Checks that the URL starts with http/https
+2. **URL Sanitization** - Removes query parameters and hash fragments
+3. **Duplicate Check** - Verifies the product isn't already tracked
+4. **Web Scraping** - Launches a headless browser to fetch product data
+5. **Data Extraction** - Extracts title, price, and product image
+6. **Storage** - Saves the product to the tracking database
+7. **Confirmation** - Sends a success message with product details
+
+<Note>
+The bot uses Playwright with Chromium to scrape product data. This may take 5-15 seconds depending on Amazon's response time.
+</Note>
+
+## Examples
+
+### Basic Usage
+
+```bash
+/add https://www.amazon.com/dp/B08N5WRWNW
+```
+
+**Bot Response:**
+```
+⏳ Obteniendo información del producto...
+
+✅ Producto agregado exitosamente
+
+📦 Apple AirPods Pro (2nd Generation)
+💰 Precio actual: $249.99
+📅 Agregado: 3/10/2026
+
+🔔 Te notificaré cuando baje el precio.
+```
+
+### Full URL with Parameters
+
+```bash
+/add https://www.amazon.com/dp/B08N5WRWNW?ref=abc&psc=1
+```
+
+The bot automatically sanitizes this to:
+```
+https://www.amazon.com/dp/B08N5WRWNW
+```
+
+<Tip>
+You don't need to clean the URL manually - the bot removes tracking parameters automatically!
+</Tip>
+
+## Product Data Stored
+
+When a product is added, the following information is stored:
+
+<ParamField path="url" type="string">
+  Sanitized Amazon product URL
+</ParamField>
+
+<ParamField path="title" type="string">
+  Product title extracted from the page
+</ParamField>
+
+<ParamField path="price" type="number">
+  Current price in USD
+</ParamField>
+
+<ParamField path="lowestPrice" type="number">
+  Initially set to the current price
+</ParamField>
+
+<ParamField path="imageUrl" type="string">
+  Product image URL for visual notifications
+</ParamField>
+
+<ParamField path="addedDate" type="string">
+  ISO timestamp of when the product was added
+</ParamField>
+
+<ParamField path="addedBy" type="number">
+  Chat ID of the user who added the product
+</ParamField>
+
+<ParamField path="lastChecked" type="string">
+  ISO timestamp of the last price check
+</ParamField>
+
+<ParamField path="history" type="array">
+  Array of price history entries (date and price)
+</ParamField>
+
+## Error Handling
+
+### Invalid URL
+
+```bash
+/add amazon.com/product
+```
+
+**Response:**
+```
+❌ URL inválida. Debe iniciar con http(s).
+```
+
+### Duplicate Product
+
+```bash
+/add https://www.amazon.com/dp/B08N5WRWNW
+```
+
+**Response:**
+```
+⚠️ Este producto ya está en seguimiento:
+Apple AirPods Pro (2nd Generation)
+```
+
+### Scraping Failed
+
+**Response:**
+```
+❌ No se pudo obtener información del producto. Revisa la URL o prueba otra.
+```
+
+<Warning>
+If scraping fails, common causes include:
+- Invalid or expired product URL
+- Amazon blocking automated requests (rare)
+- Network connectivity issues
+- Product page structure changed
+</Warning>
+
+## Code Implementation
+
+The `/add` command is implemented in `index.mjs:398-467`:
+
+```javascript index.mjs
+bot.onText(/\/add (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const raw = match[1].trim();
+  if (!raw.startsWith("http")) return bot.sendMessage(chatId, "❌ URL inválida. Debe iniciar with http(s).");
+
+  const sanitized = sanitizeAmazonURL(raw);
+  if (priceData[sanitized]) {
+    return bot.sendMessage(chatId, `⚠️ Este producto ya está en seguimiento:\n*${escapeMD(priceData[sanitized].title || sanitized)}*`, { parse_mode: "Markdown" });
+  }
+
+  const loading = await bot.sendMessage(chatId, "⏳ Obteniendo información del producto...");
+
+  try {
+    const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
+    const context = await browser.newContext();
+    const page = await context.newPage();
+
+    const scraped = await scrapeProduct(page, sanitized);
+    await browser.close();
+
+    if (scraped.error || !scraped.title || !scraped.price) {
+      await bot.editMessageText("❌ No se pudo obtener información del producto. Revisa la URL o prueba otra.", {
+        chat_id: chatId,
+        message_id: loading.message_id
+      });
+      return;
+    }
+
+    priceData[sanitized] = {
+      url: sanitized,
+      title: scraped.title,
+      price: scraped.price,
+      lowestPrice: scraped.price,
+      imageUrl: scraped.imageUrl || null,
+      addedDate: new Date().toISOString(),
+      addedBy: chatId,
+      lastChecked: new Date().toISOString(),
+      history: [{ date: new Date().toISOString(), price: scraped.price }]
+    };
+
+    saveData();
+
+    const success = `✅ *Producto agregado exitosamente*\n\n📦 ${escapeMD(scraped.title)}\n💰 Precio actual: $${scraped.price}\n📅 Agregado: ${new Date().toLocaleDateString()}\n\n🔔 Te notificaré cuando baje el precio.`;
+
+    await bot.editMessageText(success, {
+      chat_id: chatId,
+      message_id: loading.message_id,
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "🛒 Ver en Amazon", url: sanitized }, { text: "📝 Ver todos", callback_data: "list" }]
+        ]
+      }
+    });
+  } catch (err) {
+    console.error("❌ Error en /add:", err.message);
+    await bot.editMessageText("❌ Ocurrió un error agregando el producto. Intenta de nuevo más tarde.", {
+      chat_id: chatId,
+      message_id: loading.message_id
+    });
+  }
+});
+```
+
+## Best Practices
+
+<Tip>
+**Tips for successful tracking:**
+- Use the standard product page URL (containing `/dp/` or `/gp/`)
+- Avoid shortened URLs or redirects
+- Check that the product page loads correctly in a browser first
+- Products with variable pricing (marketplace sellers) may show inconsistent results
+</Tip>
+
+## Related Commands
+
+- [/list](/commands/list) - View all tracked products
+- [/remove](/commands/remove) - Remove a product from tracking
+- [/edit](/commands/edit) - Update a product's URL
+- [/check](/commands/check) - Manually check prices immediately

@@ -1,0 +1,338 @@
+---
+title: 'Price History Charts'
+description: 'Visual analytics with Chart.js integration'
+---
+
+## Overview
+
+The Price Tracker Bot generates **dynamic price history charts** using Chart.js. Charts are rendered in a headless browser and sent as images via Telegram, providing users with visual insights into price trends over time.
+
+## How Chart Generation Works
+
+### Chart.js Integration
+
+The bot uses **Playwright** to render Chart.js visualizations in a headless browser:
+
+```javascript
+async function generateChartBuffer(labels, prices, title) {
+  // Use Playwright to render a Chart.js chart and screenshot the canvas
+  const browser = await chromium.launch({ headless: true });
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+
+  const html = `
+  <html>
+    <head>
+      <meta charset="utf-8" />
+      <style>body{margin:0;padding:0}</style>
+    </head>
+    <body>
+      <canvas id="chart" width="900" height="420"></canvas>
+      <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+      <script>
+        const labels = ${JSON.stringify(labels)};
+        const data = ${JSON.stringify(prices)};
+        const title = ${JSON.stringify(title || "")};
+        const ctx = document.getElementById('chart').getContext('2d');
+        new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels,
+            datasets: [{
+              label: 'Precio',
+              data,
+              borderWidth: 2,
+              tension: 0.2,
+              fill: false
+            }]
+          },
+          options: {
+            responsive: false,
+            plugins: {
+              title: { display: true, text: title }
+            },
+            scales: {
+              y: { beginAtZero: false }
+            }
+          }
+        });
+      </script>
+    </body>
+  </html>
+  `;
+
+  await page.setContent(html, { waitUntil: "load" });
+  // Wait a bit for Chart.js to render
+  await page.waitForTimeout(1000);
+  const canvas = await page.$("#chart");
+  const buffer = await canvas.screenshot();
+  await browser.close();
+  return buffer;
+}
+```
+
+<CardGroup cols={2}>
+  <Card title="Canvas Size" icon="expand">
+    900x420 pixels for optimal mobile viewing
+  </Card>
+  <Card title="Chart Type" icon="chart-line">
+    Line chart with smooth curves (tension: 0.2)
+  </Card>
+  <Card title="Y-Axis" icon="arrows-up-down">
+    Auto-scaled, not starting from zero
+  </Card>
+  <Card title="Render Time" icon="clock">
+    1000ms wait for Chart.js to fully render
+  </Card>
+</CardGroup>
+
+## History Storage
+
+Price history is stored as an array within each product object:
+
+```javascript
+history: [
+  { date: "2026-03-01T10:00:00.000Z", price: 34.99 },
+  { date: "2026-03-01T12:00:00.000Z", price: 29.99 },
+  { date: "2026-03-02T14:00:00.000Z", price: 27.99 }
+]
+```
+
+### History Limit
+
+To prevent excessive data growth, history is limited to **120 entries**:
+
+```javascript
+const HISTORY_LIMIT = 120;
+
+// Always append history
+updated.history.push({ date: new Date().toISOString(), price: scraped.price });
+if (updated.history.length > HISTORY_LIMIT) {
+  updated.history = updated.history.slice(-HISTORY_LIMIT);
+}
+```
+
+<Info>
+With checks every 2 hours, 120 entries represent approximately **10 days** of price history.
+</Info>
+
+## Requesting a Chart
+
+Users can request price charts using the `/chart` command:
+
+```javascript
+bot.onText(/\/chart (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const raw = match[1].trim();
+  const key = sanitizeAmazonURL(raw);
+
+  if (!priceData[key]) {
+    return bot.sendMessage(chatId, "⚠️ No encontré ese producto en seguimiento. Usa /list");
+  }
+
+  await sendPriceChart(chatId, key);
+});
+```
+
+### Example Usage
+
+```
+/chart https://www.amazon.com/dp/B08N5WRWNW
+```
+
+## Chart Generation Process
+
+The `sendPriceChart()` function (lines 309-333) handles the complete workflow:
+
+```javascript
+async function sendPriceChart(chatId, productUrl) {
+  const product = priceData[productUrl];
+  if (!product) {
+    return bot.sendMessage(chatId, "⚠️ Producto no encontrado en seguimiento. Usa /list");
+  }
+
+  if (!Array.isArray(product.history) || product.history.length < 2) {
+    return bot.sendMessage(chatId, "📉 No hay suficiente historial para graficar (se requieren al menos 2 registros).");
+  }
+
+  const sorted = product.history
+    .map(h => ({ date: new Date(h.date), price: h.price }))
+    .sort((a, b) => a.date - b.date);
+
+  const labels = sorted.map(s => 
+    s.date.toLocaleString("es-MX", { 
+      day: "2-digit", 
+      month: "short", 
+      hour: "2-digit", 
+      minute: "2-digit" 
+    })
+  );
+  const prices = sorted.map(s => s.price);
+
+  try {
+    const buf = await generateChartBuffer(labels, prices, product.title);
+    await bot.sendPhoto(chatId, buf, {
+      caption: `📊 *Histórico de precios*\n${escapeMD(product.title)}`,
+      parse_mode: "Markdown",
+      reply_markup: { 
+        inline_keyboard: [[{ text: "🛒 Ver en Amazon", url: productUrl }]] 
+      }
+    });
+  } catch (err) {
+    console.error("❌ Error generando gráfico:", err.message);
+    await bot.sendMessage(chatId, "❌ Ocurrió un error generando el gráfico.");
+  }
+}
+```
+
+### Process Steps
+
+<Accordion title="Step 1: Validate Product">
+Check if the product exists in the tracking database and has sufficient history (minimum 2 data points).
+
+```javascript
+if (!product) {
+  return bot.sendMessage(chatId, "⚠️ Producto no encontrado...");
+}
+
+if (!Array.isArray(product.history) || product.history.length < 2) {
+  return bot.sendMessage(chatId, "📉 No hay suficiente historial...");
+}
+```
+</Accordion>
+
+<Accordion title="Step 2: Sort History">
+Sort price history chronologically to ensure proper chart ordering.
+
+```javascript
+const sorted = product.history
+  .map(h => ({ date: new Date(h.date), price: h.price }))
+  .sort((a, b) => a.date - b.date);
+```
+</Accordion>
+
+<Accordion title="Step 3: Format Labels">
+Convert timestamps to human-readable date/time labels in Spanish (Mexico) format.
+
+```javascript
+const labels = sorted.map(s => 
+  s.date.toLocaleString("es-MX", { 
+    day: "2-digit", 
+    month: "short", 
+    hour: "2-digit", 
+    minute: "2-digit" 
+  })
+);
+// Example: "01 mar, 10:00"
+```
+</Accordion>
+
+<Accordion title="Step 4: Extract Prices">
+Create a parallel array of price values matching the labels.
+
+```javascript
+const prices = sorted.map(s => s.price);
+```
+</Accordion>
+
+<Accordion title="Step 5: Generate Chart">
+Call `generateChartBuffer()` to create the chart image buffer.
+
+```javascript
+const buf = await generateChartBuffer(labels, prices, product.title);
+```
+</Accordion>
+
+<Accordion title="Step 6: Send to User">
+Send the chart as a photo with caption and Amazon link button.
+
+```javascript
+await bot.sendPhoto(chatId, buf, {
+  caption: `📊 *Histórico de precios*\n${escapeMD(product.title)}`,
+  parse_mode: "Markdown",
+  reply_markup: { 
+    inline_keyboard: [[{ text: "🛒 Ver en Amazon", url: productUrl }]] 
+  }
+});
+```
+</Accordion>
+
+## Interactive Chart Access
+
+Charts can also be accessed via **inline buttons** in the daily summary and product details:
+
+```javascript
+// In product detail view
+const keyboard = {
+  inline_keyboard: [
+    [{ text: "🛒 Ver en Amazon", url: product.url }],
+    [
+      { text: "✍🏻 Editar URL", callback_data: `edit_product:${productUrl}` },
+      { text: "🗑️ Eliminar", callback_data: `delete_product:${productUrl}` }
+    ],
+    [{ text: "⏪ Volver a la lista", callback_data: "list" }],
+    [{ text: "📈 Ver gráfico", callback_data: `chart:${productUrl}` }]
+  ]
+};
+```
+
+### Callback Handler
+
+```javascript
+} else if (data.startsWith("chart:")) {
+  const url = data.substring("chart:".length);
+  await sendPriceChart(chatId, url);
+}
+```
+
+<Tip>
+Users can quickly view charts without typing URLs by using the inline buttons.
+</Tip>
+
+## Chart Customization
+
+The chart configuration uses these settings:
+
+| Setting | Value | Purpose |
+|---------|-------|---------|
+| `type` | `'line'` | Line chart for trend visualization |
+| `borderWidth` | `2` | Line thickness for visibility |
+| `tension` | `0.2` | Slight curve for smooth appearance |
+| `fill` | `false` | No area fill under the line |
+| `responsive` | `false` | Fixed dimensions for consistency |
+| `beginAtZero` | `false` | Y-axis scales to data range |
+
+## Error Handling
+
+If chart generation fails, users receive a friendly error message:
+
+```javascript
+} catch (err) {
+  console.error("❌ Error generando gráfico:", err.message);
+  await bot.sendMessage(chatId, "❌ Ocurrió un error generando el gráfico.");
+}
+```
+
+<Note>
+Common errors include insufficient history, browser launch failures, or Chart.js rendering issues.
+</Note>
+
+## Performance Considerations
+
+- **Browser lifecycle**: Each chart generation launches and closes a dedicated browser instance
+- **Render wait**: 1000ms delay ensures Chart.js completes rendering before screenshot
+- **Memory usage**: Buffers are sent immediately and not stored on disk
+- **CDN dependency**: Requires internet access to load Chart.js from `cdn.jsdelivr.net`
+
+## Example Chart Output
+
+When a user requests a chart, they receive an image showing:
+
+- **X-axis**: Timestamps (e.g., "10 mar, 14:00")
+- **Y-axis**: Price values (auto-scaled)
+- **Title**: Product name
+- **Line**: Price trend over time with smooth curves
+- **Caption**: "📊 Histórico de precios" + product title
+- **Button**: "🛒 Ver en Amazon" link
+
+This provides a clear visual representation of price fluctuations, helping users identify trends and optimal purchase times.

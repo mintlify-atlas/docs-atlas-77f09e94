@@ -1,0 +1,444 @@
+---
+title: /chart Command
+description: Generate visual price history charts for tracked products
+---
+
+## Overview
+
+The `/chart` command generates a visual line chart showing the complete price history of a tracked product. The chart is created using Chart.js and rendered as an image using Playwright.
+
+## Syntax
+
+```bash
+/chart [amazon_url]
+```
+
+<ParamField path="amazon_url" type="string" required>
+  The Amazon product URL of the tracked item
+</ParamField>
+
+## How It Works
+
+1. **Product Lookup** - Finds the product by sanitized URL
+2. **History Validation** - Checks that at least 2 data points exist
+3. **Data Preparation** - Sorts price history chronologically
+4. **Chart Generation** - Renders Chart.js visualization in headless browser
+5. **Screenshot** - Captures the canvas as an image buffer
+6. **Delivery** - Sends the chart as a photo with product details
+
+<Note>
+Chart generation takes 3-5 seconds as it launches a browser to render the visualization.
+</Note>
+
+## Examples
+
+### Basic Chart Request
+
+```bash
+/chart https://www.amazon.com/dp/B08N5WRWNW
+```
+
+**Bot Response:**
+
+A photo showing a line chart with:
+- **X-axis**: Dates (formatted as "10 Mar, 14:30")
+- **Y-axis**: Prices in USD
+- **Title**: Product name
+- **Line**: Price trend over time
+
+**Caption:**
+```
+📊 Histórico de precios
+Apple AirPods Pro (2nd Generation)
+
+[🛒 Ver en Amazon]
+```
+
+### Interactive Chart via /list
+
+1. Run `/list`
+2. Click on a product
+3. Click **📈 Ver gráfico**
+
+The chart is automatically generated for the selected product.
+
+## Chart Specifications
+
+### Visual Properties
+
+<ParamField path="width" type="number" default="900">
+  Chart width in pixels
+</ParamField>
+
+<ParamField path="height" type="number" default="420">
+  Chart height in pixels
+</ParamField>
+
+<ParamField path="type" type="string" default="line">
+  Chart type (line chart for time series)
+</ParamField>
+
+<ParamField path="tension" type="number" default="0.2">
+  Line smoothing (0.2 = slightly curved)
+</ParamField>
+
+<ParamField path="fill" type="boolean" default="false">
+  No area fill under the line
+</ParamField>
+
+### Data Format
+
+```javascript
+{
+  labels: ["01 Mar, 10:00", "02 Mar, 14:30", "03 Mar, 18:15", ...],
+  datasets: [{
+    label: "Precio",
+    data: [249.99, 239.99, 229.99, ...],
+    borderWidth: 2,
+    tension: 0.2,
+    fill: false
+  }]
+}
+```
+
+## Error Handling
+
+### Product Not Found
+
+```bash
+/chart https://www.amazon.com/dp/INVALID123
+```
+
+**Response:**
+```
+⚠️ No encontré ese producto en seguimiento. Usa /list
+```
+
+### Insufficient History
+
+```bash
+/chart https://www.amazon.com/dp/B08N5WRWNW
+```
+
+**Response:**
+```
+📉 No hay suficiente historial para graficar (se requieren al menos 2 registros).
+```
+
+<Note>
+A product must have at least 2 price history entries to generate a chart. Newly added products will only have 1 entry initially.
+</Note>
+
+### Chart Generation Failed
+
+**Response:**
+```
+❌ Ocurrió un error generando el gráfico.
+```
+
+Common causes:
+- Browser launch failure
+- Memory issues
+- Network problems loading Chart.js CDN
+
+## Code Implementation
+
+The `/chart` command is implemented in `index.mjs:613-623`:
+
+```javascript index.mjs
+bot.onText(/\/chart (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const raw = match[1].trim();
+  const key = sanitizeAmazonURL(raw);
+
+  if (!priceData[key]) {
+    return bot.sendMessage(chatId, "⚠️ No encontré ese producto en seguimiento. Usa /list", { parse_mode: "Markdown" });
+  }
+
+  await sendPriceChart(chatId, key);
+});
+```
+
+## Chart Generation Function
+
+The `sendPriceChart()` function (lines 309-333) handles the chart creation:
+
+```javascript index.mjs
+async function sendPriceChart(chatId, productUrl) {
+  const product = priceData[productUrl];
+  if (!product) return bot.sendMessage(chatId, "⚠️ Producto no encontrado en seguimiento. Usa /list");
+
+  if (!Array.isArray(product.history) || product.history.length < 2) {
+    return bot.sendMessage(chatId, "📉 No hay suficiente historial para graficar (se requieren al menos 2 registros).");
+  }
+
+  const sorted = product.history.map(h => ({ date: new Date(h.date), price: h.price })).sort((a, b) => a.date - b.date);
+
+  const labels = sorted.map(s => s.date.toLocaleString("es-MX", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }));
+  const prices = sorted.map(s => s.price);
+
+  try {
+    const buf = await generateChartBuffer(labels, prices, product.title);
+    await bot.sendPhoto(chatId, buf, {
+      caption: `📊 *Histórico de precios*\n${escapeMD(product.title)}`,
+      parse_mode: "Markdown",
+      reply_markup: { inline_keyboard: [[{ text: "🛒 Ver en Amazon", url: productUrl }]] }
+    });
+  } catch (err) {
+    console.error("❌ Error generando gráfico:", err.message);
+    await bot.sendMessage(chatId, "❌ Ocurrió un error generando el gráfico.");
+  }
+}
+```
+
+## Chart Rendering with Playwright
+
+The `generateChartBuffer()` function (lines 253-307) uses Playwright to render the chart:
+
+```javascript index.mjs
+async function generateChartBuffer(labels, prices, title) {
+  const browser = await chromium.launch({ headless: true });
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+
+  const html = `
+  <html>
+    <head>
+      <meta charset="utf-8" />
+      <style>body{margin:0;padding:0}</style>
+    </head>
+    <body>
+      <canvas id="chart" width="900" height="420"></canvas>
+      <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+      <script>
+        const labels = ${JSON.stringify(labels)};
+        const data = ${JSON.stringify(prices)};
+        const title = ${JSON.stringify(title || "")};
+        const ctx = document.getElementById('chart').getContext('2d');
+        new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels,
+            datasets: [{
+              label: 'Precio',
+              data,
+              borderWidth: 2,
+              tension: 0.2,
+              fill: false
+            }]
+          },
+          options: {
+            responsive: false,
+            plugins: {
+              title: { display: true, text: title }
+            },
+            scales: {
+              y: { beginAtZero: false }
+            }
+          }
+        });
+      </script>
+    </body>
+  </html>
+  `;
+
+  await page.setContent(html, { waitUntil: "load" });
+  await page.waitForTimeout(1000);
+  const canvas = await page.$("#chart");
+  const buffer = await canvas.screenshot();
+  await browser.close();
+  return buffer;
+}
+```
+
+### Process Breakdown
+
+1. **Launch Browser** - Starts headless Chromium
+2. **Create HTML** - Injects Chart.js from CDN
+3. **Pass Data** - Serializes labels and prices into JavaScript
+4. **Render Chart** - Chart.js draws the visualization
+5. **Wait** - 1 second delay for rendering to complete
+6. **Screenshot** - Captures the canvas element
+7. **Return Buffer** - Returns image as binary buffer
+8. **Cleanup** - Closes browser
+
+<Tip>
+The chart uses Chart.js version from the CDN. If the CDN is down, chart generation will fail.
+</Tip>
+
+## Date Formatting
+
+Dates on the X-axis are formatted using Spanish locale:
+
+```javascript
+const labels = sorted.map(s => 
+  s.date.toLocaleString("es-MX", { 
+    day: "2-digit", 
+    month: "short", 
+    hour: "2-digit", 
+    minute: "2-digit" 
+  })
+);
+```
+
+**Example Output:**
+- `"01 mar, 10:30"`
+- `"15 mar, 14:45"`
+- `"28 mar, 09:15"`
+
+## Price History Data
+
+Price history is stored in the product object:
+
+```javascript
+{
+  "history": [
+    { "date": "2026-03-01T10:30:00.000Z", "price": 249.99 },
+    { "date": "2026-03-01T12:30:00.000Z", "price": 249.99 },
+    { "date": "2026-03-01T14:30:00.000Z", "price": 239.99 },
+    { "date": "2026-03-01T16:30:00.000Z", "price": 229.99 }
+  ]
+}
+```
+
+<Note>
+History is automatically updated every time prices are checked (every 2 hours or via `/check`).
+</Note>
+
+## History Limit
+
+The bot maintains up to 120 price history entries per product:
+
+```javascript index.mjs
+const HISTORY_LIMIT = 120;
+
+// In checkPrices() function:
+updated.history.push({ date: new Date().toISOString(), price: scraped.price });
+if (updated.history.length > HISTORY_LIMIT) {
+  updated.history = updated.history.slice(-HISTORY_LIMIT);
+}
+```
+
+**Coverage Estimate:**
+- Checks every 2 hours = 12 checks per day
+- 120 entries ÷ 12 = **~10 days of history**
+
+<Warning>
+Older than 10 days of data will be automatically removed to save storage space.
+</Warning>
+
+## Use Cases
+
+### Identify Trends
+
+Visualize price patterns:
+```bash
+/chart https://www.amazon.com/dp/B08N5WRWNW
+```
+
+Determine if prices are generally rising, falling, or stable.
+
+### Optimal Purchase Timing
+
+See historical lows:
+```bash
+/chart https://www.amazon.com/dp/B08N5WRWNW
+```
+
+Decide if the current price is near the historical minimum.
+
+### Validate Tracking
+
+Confirm data is being collected:
+```bash
+/add https://www.amazon.com/...
+/check
+/chart https://www.amazon.com/...
+```
+
+Verify that multiple data points are accumulating.
+
+### Share with Others
+
+Export the chart image:
+1. Run `/chart [url]`
+2. Download the image from Telegram
+3. Share with friends/family
+
+## Chart Customization
+
+While the chart is not customizable via commands, you can modify the code:
+
+### Change Colors
+
+```javascript
+datasets: [{
+  label: 'Precio',
+  data,
+  borderColor: 'rgb(75, 192, 192)',  // Add this
+  backgroundColor: 'rgba(75, 192, 192, 0.2)',  // Add this
+  borderWidth: 2,
+  tension: 0.2,
+  fill: true  // Change to true for filled area
+}]
+```
+
+### Add Grid Lines
+
+```javascript
+scales: {
+  y: { 
+    beginAtZero: false,
+    grid: { display: true }  // Add this
+  },
+  x: {
+    grid: { display: true }  // Add this
+  }
+}
+```
+
+### Change Chart Size
+
+```javascript
+<canvas id="chart" width="1200" height="600"></canvas>
+```
+
+## Performance Considerations
+
+### Generation Time
+
+| Factor | Impact |
+|--------|--------|
+| Browser launch | ~1-2 seconds |
+| Page load + Chart.js | ~1 second |
+| Rendering wait | 1 second |
+| Screenshot | ~0.5 seconds |
+| **Total** | **~3-5 seconds** |
+
+### Memory Usage
+
+Each chart generation:
+- Launches a full Chromium instance
+- Loads Chart.js library (~200KB)
+- Renders HTML canvas
+- Creates image buffer (~50-200KB)
+
+<Tip>
+For multiple charts, wait a few seconds between requests to avoid memory issues.
+</Tip>
+
+## Best Practices
+
+1. **Wait for History** - Add products and wait 24-48 hours before charting
+2. **Check Before Charting** - Run `/check` to ensure latest data is included
+3. **Use /list Shortcuts** - Click the chart button in product details
+4. **Compare with Lowest Price** - Use `/list` to see if current price is near the low
+5. **Screenshot for Records** - Save chart images to track long-term trends
+
+## Related Commands
+
+- [/add](/commands/add) - Add products to start collecting history
+- [/check](/commands/check) - Update prices before generating charts
+- [/list](/commands/list) - Access chart button in product details
+- [/stats](/commands/stats) - View aggregate statistics
+- [/edit](/commands/edit) - Update URLs while preserving history

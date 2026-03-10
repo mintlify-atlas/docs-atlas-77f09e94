@@ -1,0 +1,701 @@
+---
+title: 'Installation'
+description: 'Detailed installation instructions for the Price Tracker Bot'
+---
+
+## System Requirements
+
+Before installing the Price Tracker Bot, ensure your system meets these requirements:
+
+<CardGroup cols={2}>
+
+<Card title="Node.js" icon="node-js">
+**Version 16.0.0 or higher**
+
+Required for running the bot server and dependencies
+</Card>
+
+<Card title="npm" icon="box">
+**Version 7.0.0 or higher**
+
+Package manager (installed with Node.js)
+</Card>
+
+<Card title="Disk Space" icon="hard-drive">
+**~150 MB free**
+
+For dependencies and Chromium browser
+</Card>
+
+<Card title="Operating System" icon="desktop">
+**Linux, macOS, or Windows**
+
+Playwright supports all major platforms
+</Card>
+
+</CardGroup>
+
+## Check Your Environment
+
+Verify Node.js and npm are installed:
+
+```bash
+node --version
+# Should output: v16.0.0 or higher
+
+npm --version
+# Should output: 7.0.0 or higher
+```
+
+<Warning>
+If Node.js is not installed, download it from [nodejs.org](https://nodejs.org/). The LTS version is recommended.
+</Warning>
+
+## Installation Steps
+
+<Steps>
+
+### Clone the Repository
+
+Download the bot source code:
+
+```bash
+git clone https://github.com/your-username/price-tracker-bot.git
+cd price-tracker-bot
+```
+
+If you don't have Git installed, download the ZIP file from GitHub and extract it.
+
+### Install Dependencies
+
+Install all required npm packages:
+
+```bash
+npm install
+```
+
+This command installs the following dependencies from `package.json`:
+
+<CodeGroup>
+
+```json package.json
+{
+  "dependencies": {
+    "axios": "^1.11.0",
+    "dotenv": "^17.2.2",
+    "node-cron": "^4.2.1",
+    "node-fetch": "^3.3.2",
+    "node-telegram-bot-api": "^0.66.0",
+    "playwright": "^1.55.0"
+  }
+}
+```
+
+</CodeGroup>
+
+#### What Gets Installed
+
+| Package | Purpose | Size |
+|---------|---------|------|
+| **node-telegram-bot-api** | Telegram Bot API client | ~2 MB |
+| **playwright** | Browser automation for web scraping | ~100 MB |
+| **node-cron** | Scheduled price checks | &lt;1 MB |
+| **dotenv** | Environment variable management | &lt;1 MB |
+| **axios** | HTTP client | ~1 MB |
+| **node-fetch** | Fetch API for Node.js | &lt;1 MB |
+
+<Note>
+Playwright will automatically download a Chromium browser (~100MB) during installation. This is required for scraping Amazon product pages.
+</Note>
+
+### Install Playwright Browsers
+
+If Playwright didn't auto-install browsers, run:
+
+```bash
+npx playwright install chromium
+```
+
+This downloads the Chromium browser that Playwright uses for scraping.
+
+<Tip>
+For production servers, you may need additional system dependencies:
+
+```bash Ubuntu/Debian
+sudo npx playwright install-deps chromium
+```
+
+```bash Fedora/CentOS
+sudo npx playwright install-deps chromium
+```
+</Tip>
+
+### Create Environment Configuration
+
+Create a `.env` file in the project root:
+
+```bash
+touch .env
+```
+
+Add your Telegram bot token:
+
+```env .env
+TELEGRAM_TOKEN=your_telegram_bot_token_here
+```
+
+<Steps>
+
+#### Getting Your Telegram Bot Token
+
+1. Open Telegram and search for **@BotFather**
+2. Send `/newbot` to create a new bot
+3. Choose a name (e.g., "My Price Tracker")
+4. Choose a username (e.g., "my_price_tracker_bot")
+5. Copy the token BotFather provides
+
+<Warning>
+**Keep your token secret!** Anyone with access to this token can control your bot.
+
+Never commit `.env` to version control. It's already in `.gitignore`.
+</Warning>
+
+</Steps>
+
+### Verify Installation
+
+Check that the main file exists and is readable:
+
+```bash
+ls -la index.mjs
+```
+
+You should see:
+
+```
+-rw-r--r-- 1 user user 21234 Mar 10 12:00 index.mjs
+```
+
+### Start the Bot
+
+Run the bot:
+
+```bash
+npm start
+```
+
+Expected output:
+
+```
+ℹ️ No existe prices.json — se creará al guardar.
+✅ Datos cargados. Productos: 0, Chats: 0
+🚀 Bot iniciado. Esperando comandos...
+```
+
+<Note>
+The bot runs with Node.js `--watch` flag, so it automatically restarts when you edit `index.mjs`.
+</Note>
+
+</Steps>
+
+## Project Structure
+
+Understanding the bot's file structure:
+
+```
+price-tracker-bot/
+├── index.mjs          # Main bot application (753 lines)
+├── package.json       # Dependencies and scripts
+├── package-lock.json  # Locked dependency versions
+├── .env               # Environment variables (create this)
+├── prices.json        # Product data (auto-generated)
+├── .gitignore         # Git ignore rules
+└── README.md          # Project documentation
+```
+
+### Key Files
+
+<AccordionGroup>
+
+<Accordion title="index.mjs - Main Application">
+The core bot logic written in ES modules:
+
+- **Lines 1-50**: Configuration, imports, and data loading
+- **Lines 52-136**: Scraping engine with multiple CSS selectors
+- **Lines 138-250**: Price checking and notification logic
+- **Lines 252-333**: Chart generation using Chart.js
+- **Lines 335-702**: Telegram command handlers
+- **Lines 704-740**: Cron jobs for automation
+
+```javascript index.mjs (excerpt)
+import TelegramBot from "node-telegram-bot-api";
+import cron from "node-cron";
+import dotenv from "dotenv";
+import { chromium } from "playwright";
+
+dotenv.config();
+
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+if (!TELEGRAM_TOKEN) {
+  console.error("❌ TELEGRAM_TOKEN no definido en .env");
+  process.exit(1);
+}
+
+const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
+```
+
+See `index.mjs:1-17` for initialization code.
+</Accordion>
+
+<Accordion title="prices.json - Data Storage">
+Auto-generated JSON file storing:
+- Product information (title, URL, price)
+- Price history (up to 120 data points)
+- Registered chat IDs
+- Metadata (dates, lowest price)
+
+```json
+{
+  "products": {
+    "https://www.amazon.com/dp/B08N5WRWNW": {
+      "url": "https://www.amazon.com/dp/B08N5WRWNW",
+      "title": "Example Product",
+      "price": 79.99,
+      "lowestPrice": 79.99,
+      "imageUrl": "https://...",
+      "addedDate": "2024-03-10T12:00:00.000Z",
+      "lastChecked": "2024-03-10T14:00:00.000Z",
+      "addedBy": 123456789,
+      "history": [
+        {"date": "2024-03-10T12:00:00.000Z", "price": 99.99},
+        {"date": "2024-03-10T14:00:00.000Z", "price": 79.99}
+      ]
+    }
+  },
+  "chats": [123456789]
+}
+```
+
+Managed by `loadData()` and `saveData()` functions in `index.mjs:24-48`.
+</Accordion>
+
+<Accordion title=".env - Environment Variables">
+Secure configuration file (not committed to Git):
+
+```env
+# Required
+TELEGRAM_TOKEN=123456789:ABCdefGhIjKlmNoPQRsTUVwxyZ
+
+# Optional (for future features)
+# AWS_ACCESS_KEY=...
+# DATABASE_URL=...
+```
+
+Loaded via `dotenv.config()` in `index.mjs:8`.
+</Accordion>
+
+</AccordionGroup>
+
+## Configuration Options
+
+Customize bot behavior by editing `index.mjs`:
+
+### Price Check Frequency
+
+Modify the cron schedule:
+
+```javascript index.mjs:732-740
+// Check prices every 2 hours (default)
+cron.schedule("0 */2 * * *", async () => {
+  await checkPrices();
+});
+
+// Change to every 6 hours:
+cron.schedule("0 */6 * * *", async () => {
+  await checkPrices();
+});
+```
+
+### Daily Summary Time
+
+Change when daily summaries are sent:
+
+```javascript index.mjs:719-730
+// Daily summary at 20:00 (default)
+cron.schedule("0 20 * * *", async () => {
+  // Send summaries
+});
+
+// Change to 9:00 AM:
+cron.schedule("0 9 * * *", async () => {
+  // Send summaries
+});
+```
+
+### Price History Limit
+
+Adjust how many price points to store:
+
+```javascript index.mjs:69
+// Default: 120 price points
+const HISTORY_LIMIT = 120;
+
+// Increase to 240:
+const HISTORY_LIMIT = 240;
+```
+
+<Warning>
+Larger history limits increase `prices.json` file size. 120 points covers ~10 days of hourly checks.
+</Warning>
+
+## Running in Production
+
+### Using PM2 Process Manager
+
+For production deployments, use PM2 to keep the bot running:
+
+```bash
+# Install PM2 globally
+npm install -g pm2
+
+# Start the bot with PM2
+pm2 start index.mjs --name price-tracker-bot
+
+# View logs
+pm2 logs price-tracker-bot
+
+# Auto-restart on system reboot
+pm2 startup
+pm2 save
+```
+
+### Using Docker
+
+Create a `Dockerfile`:
+
+```dockerfile Dockerfile
+FROM node:18-slim
+
+WORKDIR /app
+
+# Install Playwright dependencies
+RUN apt-get update && apt-get install -y \
+    libnss3 \
+    libatk-bridge2.0-0 \
+    libdrm2 \
+    libxkbcommon0 \
+    libgbm1 \
+    libasound2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci --only=production
+
+# Install Playwright browsers
+RUN npx playwright install chromium
+
+# Copy application code
+COPY index.mjs .
+
+# Run the bot
+CMD ["node", "index.mjs"]
+```
+
+Build and run:
+
+```bash
+# Build image
+docker build -t price-tracker-bot .
+
+# Run container
+docker run -d \
+  --name price-tracker \
+  --env-file .env \
+  -v $(pwd)/prices.json:/app/prices.json \
+  price-tracker-bot
+```
+
+### Using systemd (Linux)
+
+Create a service file:
+
+```ini /etc/systemd/system/price-tracker-bot.service
+[Unit]
+Description=Price Tracker Bot
+After=network.target
+
+[Service]
+Type=simple
+User=your-user
+WorkingDirectory=/path/to/price-tracker-bot
+Environment="NODE_ENV=production"
+ExecStart=/usr/bin/node index.mjs
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start:
+
+```bash
+sudo systemctl enable price-tracker-bot
+sudo systemctl start price-tracker-bot
+sudo systemctl status price-tracker-bot
+```
+
+## Troubleshooting Installation
+
+<AccordionGroup>
+
+<Accordion title="npm install fails">
+**Symptoms**: Errors during `npm install`
+
+**Solutions**:
+
+1. Clear npm cache:
+```bash
+npm cache clean --force
+rm -rf node_modules package-lock.json
+npm install
+```
+
+2. Update npm:
+```bash
+npm install -g npm@latest
+```
+
+3. Check Node.js version:
+```bash
+node --version
+# Upgrade to Node.js 16+ if needed
+```
+</Accordion>
+
+<Accordion title="Playwright installation errors">
+**Symptoms**: Chromium download fails or browser not found
+
+**Solutions**:
+
+1. Manual browser install:
+```bash
+npx playwright install chromium
+```
+
+2. Install system dependencies (Linux):
+```bash Ubuntu/Debian
+sudo npx playwright install-deps chromium
+```
+
+3. Check disk space:
+```bash
+df -h
+# Ensure at least 150MB free
+```
+</Accordion>
+
+<Accordion title="TELEGRAM_TOKEN error on startup">
+**Symptoms**: `❌ TELEGRAM_TOKEN no definido en .env`
+
+**Solutions**:
+
+1. Verify `.env` file exists:
+```bash
+ls -la .env
+```
+
+2. Check file contents:
+```bash
+cat .env
+# Should show: TELEGRAM_TOKEN=123456...
+```
+
+3. Ensure no extra spaces:
+```env
+# ✅ Correct
+TELEGRAM_TOKEN=123456789:ABC...
+
+# ❌ Wrong (space before token)
+TELEGRAM_TOKEN= 123456789:ABC...
+```
+
+4. Restart the bot:
+```bash
+npm start
+```
+</Accordion>
+
+<Accordion title="Bot starts but doesn't respond">
+**Symptoms**: Bot runs but doesn't reply to commands
+
+**Solutions**:
+
+1. Check bot token is valid:
+   - Talk to @BotFather
+   - Send `/mybots` → select your bot → API Token
+
+2. Verify bot is running:
+```bash
+ps aux | grep node
+```
+
+3. Check for errors in console output
+
+4. Send `/start` to register your chat ID
+</Accordion>
+
+<Accordion title="Scraping fails on all products">
+**Symptoms**: All `/add` commands fail with scraping errors
+
+**Solutions**:
+
+1. Test browser install:
+```bash
+npx playwright install chromium
+```
+
+2. Check network connectivity:
+```bash
+curl -I https://www.amazon.com
+```
+
+3. Try with `--no-sandbox` (already default in code):
+```javascript index.mjs:148
+const browser = await chromium.launch({ 
+  headless: true, 
+  args: ["--no-sandbox", "--disable-dev-shm-usage"] 
+});
+```
+
+4. Increase timeout (if network is slow):
+```javascript index.mjs:75
+await page.goto(url, { 
+  waitUntil: "domcontentloaded", 
+  timeout: 60000  // Increase this
+});
+```
+</Accordion>
+
+<Accordion title="Permission denied errors">
+**Symptoms**: Cannot write to `prices.json`
+
+**Solutions**:
+
+1. Check file permissions:
+```bash
+ls -la prices.json
+```
+
+2. Fix permissions:
+```bash
+chmod 644 prices.json
+```
+
+3. Ensure directory is writable:
+```bash
+ls -ld .
+chmod 755 .
+```
+</Accordion>
+
+</AccordionGroup>
+
+## Security Considerations
+
+<Warning>
+**Important Security Notes**:
+
+1. **Never commit `.env` file** - Contains your bot token
+2. **Keep `prices.json` private** - Contains user chat IDs
+3. **Use firewall rules** - Restrict outbound connections if needed
+4. **Regular updates** - Keep dependencies updated with `npm update`
+5. **Monitor logs** - Watch for suspicious activity
+</Warning>
+
+### Securing Your Token
+
+```bash
+# Set restrictive permissions on .env
+chmod 600 .env
+
+# Verify .env is in .gitignore
+grep .env .gitignore
+```
+
+### Updating Dependencies
+
+Keep packages secure:
+
+```bash
+# Check for vulnerabilities
+npm audit
+
+# Fix vulnerabilities automatically
+npm audit fix
+
+# Update all packages
+npm update
+
+# Check for outdated packages
+npm outdated
+```
+
+## Performance Tuning
+
+### Memory Usage
+
+The bot's memory footprint:
+
+- **Base**: ~50 MB (Node.js + dependencies)
+- **Per browser instance**: ~100-150 MB
+- **Peak**: ~200 MB during price checks
+
+<Tip>
+Browser instances are created per price check cycle and closed immediately after. See `index.mjs:148-217` for browser lifecycle management.
+</Tip>
+
+### Optimizing Price Checks
+
+```javascript
+// Reduce delay between products (faster, more load)
+await new Promise((r) => setTimeout(r, 500));  // Instead of 900ms
+
+// Increase delay (slower, less load)
+await new Promise((r) => setTimeout(r, 2000));  // Instead of 900ms
+```
+
+See `index.mjs:214` for the delay between product checks.
+
+## Next Steps
+
+<CardGroup cols={2}>
+
+<Card title="Quickstart Guide" icon="rocket" href="/quickstart">
+Learn how to use the bot and track your first product
+</Card>
+
+<Card title="Source Code" icon="code" href="https://github.com/your-repo">
+Explore the code on GitHub
+</Card>
+
+</CardGroup>
+
+## Getting Help
+
+If you encounter issues:
+
+1. Check the [Troubleshooting](#troubleshooting-installation) section above
+2. Review console output for error messages
+3. Ensure all requirements are met
+4. Open an issue on GitHub with:
+   - Your Node.js version (`node --version`)
+   - Error messages from console
+   - Steps to reproduce
+
+<Note>
+For questions about Amazon's terms of service regarding scraping, review their robots.txt and scraping policies. This bot is for educational purposes.
+</Note>

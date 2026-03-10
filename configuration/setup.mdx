@@ -1,0 +1,265 @@
+---
+title: 'Initial Setup'
+description: 'Configure your Price Tracker Bot for first-time use'
+icon: 'gear'
+---
+
+## Overview
+
+The Price Tracker Bot requires minimal configuration to get started. This guide walks you through creating the necessary configuration files, setting up data persistence, and ensuring proper file permissions.
+
+## Prerequisites
+
+Before setting up the bot, ensure you have:
+
+- Node.js 16+ installed
+- A Telegram Bot Token from [@BotFather](https://t.me/BotFather)
+- Playwright browsers installed (`npx playwright install chromium`)
+
+<Note>
+The bot uses Playwright with Chromium for web scraping. The first run may take longer while Playwright downloads the browser binaries.
+</Note>
+
+## Environment File Setup
+
+### Creating the .env File
+
+The bot uses a `.env` file to store sensitive configuration. Create this file in your project root:
+
+```bash
+touch .env
+```
+
+Add your Telegram bot token:
+
+```bash .env
+TELEGRAM_TOKEN=your_bot_token_here
+```
+
+<Warning>
+**Never commit your .env file to version control!** Add it to your `.gitignore`:
+
+```bash
+echo ".env" >> .gitignore
+```
+</Warning>
+
+### Token Validation
+
+The bot validates the presence of `TELEGRAM_TOKEN` at startup. If the token is missing, the application will exit immediately:
+
+```javascript index.mjs (lines 11-15)
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+if (!TELEGRAM_TOKEN) {
+  console.error("❌ TELEGRAM_TOKEN no definido en .env");
+  process.exit(1);
+}
+```
+
+This validation ensures the bot never runs without proper authentication credentials.
+
+## Data Persistence Configuration
+
+### Storage File
+
+The bot stores all product data and chat subscriptions in a JSON file:
+
+```javascript index.mjs (line 20)
+const DATA_FILE = "prices.json";
+```
+
+This file is automatically created on first save and contains:
+
+- **products**: All tracked products with price history
+- **chats**: Registered chat IDs for notifications
+
+<Tip>
+The `prices.json` file is created automatically in the same directory as your bot script. No manual creation is needed.
+</Tip>
+
+### Data Structure
+
+The persistence file follows this structure:
+
+```json
+{
+  "products": {
+    "https://amazon.com/dp/PRODUCT123": {
+      "url": "https://amazon.com/dp/PRODUCT123",
+      "title": "Example Product",
+      "price": 29.99,
+      "lowestPrice": 24.99,
+      "imageUrl": "https://...",
+      "addedDate": "2026-03-10T12:00:00.000Z",
+      "lastChecked": "2026-03-10T14:30:00.000Z",
+      "addedBy": 123456789,
+      "history": [
+        { "date": "2026-03-10T12:00:00.000Z", "price": 29.99 },
+        { "date": "2026-03-10T14:00:00.000Z", "price": 27.99 }
+      ]
+    }
+  },
+  "chats": [123456789, 987654321]
+}
+```
+
+### Loading Data on Startup
+
+The bot loads existing data during initialization:
+
+```javascript index.mjs (lines 24-39)
+function loadData() {
+  if (fs.existsSync(DATA_FILE)) {
+    try {
+      const saved = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+      priceData = saved.products || {};
+      chats = new Set(saved.chats || []);
+      console.log(`✅ Datos cargados. Productos: ${Object.keys(priceData).length}, Chats: ${chats.size}`);
+    } catch (err) {
+      console.error("❌ Error al cargar datos:", err.message);
+      priceData = {};
+      chats = new Set();
+    }
+  } else {
+    console.log("ℹ️ No existe prices.json — se creará al guardar.");
+  }
+}
+```
+
+If the file doesn't exist or is corrupted, the bot starts with empty data structures.
+
+### History Limit Configuration
+
+To prevent unbounded growth of price history, the bot limits stored records:
+
+```javascript index.mjs (line 69)
+const HISTORY_LIMIT = 120;
+```
+
+With price checks every 2 hours, this provides approximately **10 days** of history per product.
+
+<ParamField path="HISTORY_LIMIT" type="number" default="120">
+  Maximum number of price history entries to retain per product. Older entries are automatically removed.
+</ParamField>
+
+<Note>
+You can modify `HISTORY_LIMIT` directly in the source code. Higher values provide longer history but increase file size.
+</Note>
+
+## File Permissions
+
+### Read/Write Access
+
+Ensure the bot has proper permissions to create and modify `prices.json`:
+
+```bash
+# Check current permissions
+ls -la prices.json
+
+# Set read/write permissions for the user
+chmod 600 prices.json
+```
+
+<Warning>
+The bot needs write access to its working directory. Running in read-only filesystems will cause data loss.
+</Warning>
+
+### Directory Permissions
+
+The bot should run in a directory where it can create files:
+
+```bash
+# Verify directory is writable
+test -w . && echo "Directory is writable" || echo "No write access"
+```
+
+## Running the Bot
+
+### First Launch
+
+After configuration, start the bot:
+
+```bash
+node index.mjs
+```
+
+Successful startup shows:
+
+```
+✅ Datos cargados. Productos: 0, Chats: 0
+🚀 Bot iniciado. Esperando comandos...
+```
+
+### Testing Configuration
+
+1. **Send `/start` to your bot** in Telegram
+2. **Add a test product** with `/add [amazon-url]`
+3. **Verify data persistence** by restarting the bot and checking the product is still tracked
+
+<Tip>
+Use `/stats` to verify your configuration is working correctly. It should show your tracked products and registered chats.
+</Tip>
+
+## Backup Strategy
+
+### Manual Backups
+
+Regularly backup your `prices.json` file:
+
+```bash
+# Create timestamped backup
+cp prices.json "prices.backup.$(date +%Y%m%d_%H%M%S).json"
+```
+
+### Automated Backups
+
+Consider using a cron job for automatic backups:
+
+```bash
+# Backup daily at 3 AM
+0 3 * * * cp /path/to/prices.json /backups/prices.$(date +\%Y\%m\%d).json
+```
+
+<Note>
+The bot automatically saves data after every change, so you don't need to manually trigger saves.
+</Note>
+
+## Troubleshooting
+
+### Bot Won't Start
+
+**Symptom**: Bot exits immediately with "TELEGRAM_TOKEN no definido"
+
+**Solution**: 
+1. Verify `.env` file exists in the project root
+2. Check the token is on a line starting with `TELEGRAM_TOKEN=`
+3. Ensure no spaces around the `=` sign
+
+### Data Not Persisting
+
+**Symptom**: Products disappear after restart
+
+**Solution**:
+1. Check file permissions on `prices.json`
+2. Verify disk space is available: `df -h`
+3. Look for write errors in bot console output
+
+### Corrupted Data File
+
+**Symptom**: Bot starts with empty data despite existing `prices.json`
+
+**Solution**:
+1. Validate JSON syntax: `jq . prices.json`
+2. Restore from backup if available
+3. Bot will create fresh file if current one is deleted
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Environment Variables" icon="key" href="./environment-variables">
+    Learn about all available configuration options
+  </Card>
+  <Card title="Scheduling" icon="clock" href="./scheduling">
+    Configure automated price checks and summaries
+  </Card>
+</CardGroup>

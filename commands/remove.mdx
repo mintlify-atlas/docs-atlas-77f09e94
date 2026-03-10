@@ -1,0 +1,258 @@
+---
+title: /remove Command
+description: Remove a product from your price tracking list
+---
+
+## Overview
+
+The `/remove` command removes a specific Amazon product from your tracking list. All associated data, including price history, will be permanently deleted.
+
+## Syntax
+
+```bash
+/remove [amazon_url]
+```
+
+<ParamField path="amazon_url" type="string" required>
+  The Amazon product URL or a partial URL/title to identify the product
+</ParamField>
+
+<Warning>
+Removal is permanent. All price history for the product will be lost. Use caution with this command.
+</Warning>
+
+## How It Works
+
+1. **URL Sanitization** - Cleans the provided URL
+2. **Exact Match** - Searches for a product with the sanitized URL
+3. **Fuzzy Match** - If exact match fails, searches by partial URL or title
+4. **Deletion** - Removes the product from the database
+5. **Confirmation** - Sends a success message with the product name
+
+## Examples
+
+### Remove by Full URL
+
+```bash
+/remove https://www.amazon.com/dp/B08N5WRWNW
+```
+
+**Bot Response:**
+```
+🗑️ Producto eliminado:
+Apple AirPods Pro (2nd Generation)
+```
+
+### Remove by Partial URL
+
+```bash
+/remove B08N5WRWNW
+```
+
+**Bot Response:**
+```
+🗑️ Producto eliminado:
+Apple AirPods Pro (2nd Generation)
+```
+
+### Remove by Title (Partial Match)
+
+```bash
+/remove AirPods Pro
+```
+
+**Bot Response:**
+```
+🗑️ Producto eliminado:
+Apple AirPods Pro (2nd Generation)
+```
+
+<Tip>
+You don't need the full URL. Any unique identifier from the URL or product title works.
+</Tip>
+
+## Product Not Found
+
+If the product doesn't exist:
+
+```bash
+/remove https://www.amazon.com/dp/INVALID123
+```
+
+**Response:**
+```
+⚠️ No se encontró producto con esa URL.
+Usa /list para ver tus productos.
+```
+
+## Code Implementation
+
+The `/remove` command is implemented in `index.mjs:520-542`:
+
+```javascript index.mjs
+bot.onText(/\/remove (.+)/, (msg, match) => {
+  const chatId = msg.chat.id;
+  const raw = match[1].trim();
+  const sanitized = sanitizeAmazonURL(raw);
+
+  if (priceData[sanitized]) {
+    const title = priceData[sanitized].title || sanitized;
+    delete priceData[sanitized];
+    saveData();
+    return bot.sendMessage(chatId, `🗑️ *Producto eliminado:*\n${escapeMD(title)}`, { parse_mode: "Markdown" });
+  }
+
+  // Sometimes user passes a key that is not sanitized; try find by partial match
+  const foundKey = Object.keys(priceData).find(k => k.includes(raw) || (priceData[k].title && priceData[k].title.includes(raw)));
+  if (foundKey) {
+    const title = priceData[foundKey].title || foundKey;
+    delete priceData[foundKey];
+    saveData();
+    return bot.sendMessage(chatId, `🗑️ *Producto eliminado:*\n${escapeMD(title)}`, { parse_mode: "Markdown" });
+  }
+
+  bot.sendMessage(chatId, "⚠️ No se encontró producto con esa URL.\nUsa /list para ver tus productos.", { parse_mode: "Markdown" });
+});
+```
+
+## Matching Logic
+
+### Step 1: Exact Match
+
+The bot first tries to match the sanitized URL exactly:
+
+```javascript
+const sanitized = sanitizeAmazonURL(raw);
+if (priceData[sanitized]) {
+  // Found exact match
+  delete priceData[sanitized];
+}
+```
+
+### Step 2: Fuzzy Match
+
+If no exact match, it searches for partial matches:
+
+```javascript
+const foundKey = Object.keys(priceData).find(k => 
+  k.includes(raw) || 
+  (priceData[k].title && priceData[k].title.includes(raw))
+);
+```
+
+This allows removal by:
+- Partial URL (e.g., `/dp/B08N5WRWNW`)
+- Product ID (e.g., `B08N5WRWNW`)
+- Title keywords (e.g., `AirPods`)
+
+<Note>
+Fuzzy matching returns the first product that contains the search term. If multiple products match, only the first is removed.
+</Note>
+
+## Alternative: Remove via /list
+
+You can also remove products interactively through the `/list` command:
+
+1. Run `/list`
+2. Click on the product you want to remove
+3. Click the **🗑️ Eliminar** button
+
+**Result:**
+```
+🗑️ Producto eliminado:
+Apple AirPods Pro (2nd Generation)
+```
+
+This method is safer as you can visually confirm which product you're removing.
+
+## Bulk Removal
+
+To remove ALL products at once, use the bulk delete feature in `/list`:
+
+1. Run `/list`
+2. Click **🗑️ Eliminar todos**
+
+**Result:**
+```
+🗑️ Se eliminaron 5 productos.
+```
+
+<Warning>
+Bulk deletion removes ALL tracked products and their complete price history. This cannot be undone.
+</Warning>
+
+## Use Cases
+
+### Product Already Purchased
+
+After buying a product, remove it from tracking:
+```bash
+/remove https://www.amazon.com/dp/B08N5WRWNW
+```
+
+### No Longer Interested
+
+Remove products you've decided not to buy:
+```bash
+/remove Samsung Galaxy S23
+```
+
+### Incorrect URL Added
+
+Quickly remove a product that was added by mistake:
+```bash
+/add https://www.amazon.com/wrong-product
+/remove wrong-product
+```
+
+### Cleanup Before New Tracking Period
+
+Clear old products before a new shopping season:
+```bash
+/list
+# Click "🗑️ Eliminar todos"
+```
+
+## Best Practices
+
+<Tip>
+**Tips for safe removal:**
+- Use `/list` to view products before removing
+- Copy the full URL from `/list` for exact removal
+- Use the interactive delete button in `/list` for visual confirmation
+- For bulk cleanup, use the "Eliminar todos" button
+</Tip>
+
+## Data Deletion
+
+When a product is removed, the following data is deleted:
+
+- Product URL and title
+- Current price
+- Lowest price ever recorded
+- Complete price history (all historical data points)
+- Product image URL
+- Added date and last checked timestamp
+- Chat ID of who added it
+
+<Note>
+The deletion only affects the product data. Your chat registration remains active for future product tracking.
+</Note>
+
+## Persistence
+
+Changes are immediately saved to the `prices.json` file:
+
+```javascript
+delete priceData[sanitized];
+saveData();
+```
+
+This ensures the removal persists across bot restarts.
+
+## Related Commands
+
+- [/add](/commands/add) - Add a product to tracking
+- [/list](/commands/list) - View all tracked products
+- [/edit](/commands/edit) - Update a product URL instead of removing
+- [/stats](/commands/stats) - View statistics about tracked products

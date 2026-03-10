@@ -1,0 +1,558 @@
+---
+title: 'Scheduling Configuration'
+description: 'Configure automated price checks and daily summaries with cron jobs'
+icon: 'clock'
+---
+
+## Overview
+
+The Price Tracker Bot uses `node-cron` to schedule automated tasks. Two main cron jobs run continuously:
+
+1. **Daily Summary** - Sends product list to all registered chats at 20:00
+2. **Price Checks** - Scrapes Amazon prices every 2 hours and notifies on price drops
+
+Both schedules use standard cron syntax and run based on the server's system timezone.
+
+## Cron Job Implementation
+
+The bot imports and uses the `node-cron` library:
+
+```javascript index.mjs (line 4)
+import cron from "node-cron";
+```
+
+<Note>
+All cron schedules run in the bot's process. If the bot is stopped, scheduled tasks won't execute until it restarts.
+</Note>
+
+## Daily Summary Schedule
+
+### Schedule Configuration
+
+The daily summary runs at 20:00 (8:00 PM) server time:
+
+```javascript index.mjs (lines 719-730)
+// Daily summary at 20:00 (server timezone)
+cron.schedule("0 20 * * *", async () => {
+  console.log("📄 Envío de resumen diario...");
+  for (const chatId of chats) {
+    try {
+      await dailySummary(chatId);
+      await new Promise(r => setTimeout(r, 400));
+    } catch (err) {
+      console.error(`❌ Error enviando resumen a ${chatId}:`, err.message);
+    }
+  }
+});
+```
+
+### Cron Syntax Breakdown
+
+```
+"0 20 * * *"
+ │ │  │ │ │
+ │ │  │ │ └─── Day of week (0-7, Sunday=0 or 7)
+ │ │  │ └───── Month (1-12)
+ │ │  └─────── Day of month (1-31)
+ │ └────────── Hour (0-23)
+ └──────────── Minute (0-59)
+```
+
+**Translation**: At minute 0 of hour 20, every day
+
+<ParamField path="Daily Summary Schedule" type="string" default="0 20 * * *">
+  Cron expression for when to send daily product summaries to all registered chats.
+</ParamField>
+
+### What the Daily Summary Does
+
+1. **Iterates through all registered chats** stored in the `chats` Set
+2. **Sends interactive product list** with buttons for each tracked product
+3. **Adds 400ms delay** between messages to avoid Telegram rate limits
+4. **Handles errors gracefully** - failures for one chat don't stop others
+
+<Tip>
+Users receive a message with inline buttons to view details, check charts, or manage their tracked products.
+</Tip>
+
+## Price Check Schedule
+
+### Schedule Configuration
+
+Price checks run every 2 hours:
+
+```javascript index.mjs (lines 732-740)
+// Check prices every 2 hours
+cron.schedule("0 */2 * * *", async () => {
+  console.log("🔄 Cron: revisión automática de precios...");
+  try {
+    await checkPrices();
+  } catch (err) {
+    console.error("❌ Error en cron checkPrices:", err.message);
+  }
+});
+```
+
+### Cron Syntax Breakdown
+
+```
+"0 */2 * * *"
+ │ │   │ │ │
+ │ │   │ │ └─── Day of week (any)
+ │ │   │ └───── Month (any)
+ │ │   └─────── Day of month (any)
+ │ └─────────── Hour (every 2 hours)
+ └───────────── Minute (at minute 0)
+```
+
+**Translation**: At minute 0 of every 2nd hour (00:00, 02:00, 04:00, ..., 22:00)
+
+<ParamField path="Price Check Schedule" type="string" default="0 */2 * * *">
+  Cron expression for when to scrape product prices and check for changes.
+</ParamField>
+
+### Execution Times
+
+With the `*/2` pattern, checks occur at:
+
+| Time | Execution |
+|------|----------|
+| 00:00 | ✅ Midnight check |
+| 02:00 | ✅ Early morning |
+| 04:00 | ✅ |
+| 06:00 | ✅ |
+| 08:00 | ✅ Morning |
+| 10:00 | ✅ |
+| 12:00 | ✅ Noon |
+| 14:00 | ✅ Afternoon |
+| 16:00 | ✅ |
+| 18:00 | ✅ Evening |
+| 20:00 | ✅ (+ Daily Summary) |
+| 22:00 | ✅ Night |
+
+**Total**: 12 price checks per day (every 2 hours)
+
+### What Price Checks Do
+
+1. **Launch Chromium browser** via Playwright
+2. **Visit each tracked product** URL on Amazon
+3. **Scrape current price** and compare to stored value
+4. **Detect price drops** and calculate savings
+5. **Send notifications** to all registered chats for price reductions
+6. **Update price history** (keeping last 120 entries per product)
+7. **Save data** to persistence file
+
+<Warning>
+Price checks can take several minutes if you're tracking many products. Each product is scraped sequentially with 900ms delays between requests.
+</Warning>
+
+## Modifying Schedules
+
+### Changing Check Frequency
+
+To check prices more or less frequently, modify the cron expression:
+
+<CodeGroup>
+
+```javascript Every Hour
+cron.schedule("0 * * * *", async () => {
+  console.log("🔄 Cron: revisión automática de precios...");
+  try {
+    await checkPrices();
+  } catch (err) {
+    console.error("❌ Error en cron checkPrices:", err.message);
+  }
+});
+```
+
+```javascript Every 4 Hours
+cron.schedule("0 */4 * * *", async () => {
+  console.log("🔄 Cron: revisión automática de precios...");
+  try {
+    await checkPrices();
+  } catch (err) {
+    console.error("❌ Error en cron checkPrices:", err.message);
+  }
+});
+```
+
+```javascript Every 30 Minutes
+cron.schedule("*/30 * * * *", async () => {
+  console.log("🔄 Cron: revisión automática de precios...");
+  try {
+    await checkPrices();
+  } catch (err) {
+    console.error("❌ Error en cron checkPrices:", err.message);
+  }
+});
+```
+
+```javascript Twice Daily (6 AM and 6 PM)
+cron.schedule("0 6,18 * * *", async () => {
+  console.log("🔄 Cron: revisión automática de precios...");
+  try {
+    await checkPrices();
+  } catch (err) {
+    console.error("❌ Error en cron checkPrices:", err.message);
+  }
+});
+```
+
+</CodeGroup>
+
+<Tip>
+**Recommended frequency**: Every 2-4 hours balances timely notifications with server load and Amazon rate limiting.
+</Tip>
+
+### Changing Daily Summary Time
+
+To send summaries at a different time, modify the hour value:
+
+<CodeGroup>
+
+```javascript Morning (8 AM)
+cron.schedule("0 8 * * *", async () => {
+  console.log("📄 Envío de resumen diario...");
+  for (const chatId of chats) {
+    try {
+      await dailySummary(chatId);
+      await new Promise(r => setTimeout(r, 400));
+    } catch (err) {
+      console.error(`❌ Error enviando resumen a ${chatId}:`, err.message);
+    }
+  }
+});
+```
+
+```javascript Noon (12 PM)
+cron.schedule("0 12 * * *", async () => {
+  console.log("📄 Envío de resumen diario...");
+  for (const chatId of chats) {
+    try {
+      await dailySummary(chatId);
+      await new Promise(r => setTimeout(r, 400));
+    } catch (err) {
+      console.error(`❌ Error enviando resumen a ${chatId}:`, err.message);
+    }
+  }
+});
+```
+
+```javascript Evening (18:00 / 6 PM)
+cron.schedule("0 18 * * *", async () => {
+  console.log("📄 Envío de resumen diario...");
+  for (const chatId of chats) {
+    try {
+      await dailySummary(chatId);
+      await new Promise(r => setTimeout(r, 400));
+    } catch (err) {
+      console.error(`❌ Error enviando resumen a ${chatId}:`, err.message);
+    }
+  }
+});
+```
+
+</CodeGroup>
+
+### Disabling Scheduled Tasks
+
+To disable a cron job, comment it out or remove it:
+
+```javascript
+// Disabled: Daily summary
+// cron.schedule("0 20 * * *", async () => {
+//   console.log("📄 Envío de resumen diario...");
+//   ...
+// });
+
+// Price checks still active
+cron.schedule("0 */2 * * *", async () => {
+  console.log("🔄 Cron: revisión automática de precios...");
+  try {
+    await checkPrices();
+  } catch (err) {
+    console.error("❌ Error en cron checkPrices:", err.message);
+  }
+});
+```
+
+<Note>
+Users can still manually trigger price checks using the `/check` command or "🔄 Revisar precios ahora" button.
+</Note>
+
+## Advanced Cron Patterns
+
+### Business Hours Only
+
+Check prices only during business hours (9 AM - 6 PM, Monday-Friday):
+
+```javascript
+cron.schedule("0 9-18 * * 1-5", async () => {
+  console.log("🔄 Cron: revisión automática de precios...");
+  try {
+    await checkPrices();
+  } catch (err) {
+    console.error("❌ Error en cron checkPrices:", err.message);
+  }
+});
+```
+
+**Pattern breakdown**: `0 9-18 * * 1-5`
+- Minute: 0 (top of the hour)
+- Hour: 9-18 (9 AM through 6 PM)
+- Day of month: * (any)
+- Month: * (any)
+- Day of week: 1-5 (Monday through Friday)
+
+### Weekend Only
+
+Check prices only on weekends:
+
+```javascript
+cron.schedule("0 */3 * * 0,6", async () => {
+  console.log("🔄 Cron: revisión automática de precios (fin de semana)...");
+  try {
+    await checkPrices();
+  } catch (err) {
+    console.error("❌ Error en cron checkPrices:", err.message);
+  }
+});
+```
+
+**Pattern**: `0 */3 * * 0,6` - Every 3 hours on Sunday (0) and Saturday (6)
+
+### Multiple Daily Summaries
+
+Send summaries twice per day:
+
+```javascript
+cron.schedule("0 9,21 * * *", async () => {
+  console.log("📄 Envío de resumen diario...");
+  for (const chatId of chats) {
+    try {
+      await dailySummary(chatId);
+      await new Promise(r => setTimeout(r, 400));
+    } catch (err) {
+      console.error(`❌ Error enviando resumen a ${chatId}:`, err.message);
+    }
+  }
+});
+```
+
+**Pattern**: `0 9,21 * * *` - At 9:00 AM and 9:00 PM daily
+
+## Timezone Considerations
+
+### Server Timezone
+
+Cron jobs run based on the **server's system timezone**, not user timezones.
+
+**Check your server timezone**:
+
+```bash
+date
+timedatectl  # On Linux with systemd
+```
+
+**Example output**:
+```
+Mon Mar 10 14:30:00 PST 2026
+Time zone: America/Los_Angeles (PST, -0800)
+```
+
+<Warning>
+If your server is in UTC but you want schedules in Pacific Time, adjust the hour values accordingly. For example, 20:00 PST = 04:00 UTC the next day.
+</Warning>
+
+### Setting Server Timezone
+
+**On Linux**:
+```bash
+# Set to Pacific Time
+sudo timedatectl set-timezone America/Los_Angeles
+
+# Set to UTC
+sudo timedatectl set-timezone UTC
+
+# Set to Eastern Time
+sudo timedatectl set-timezone America/New_York
+```
+
+**On Docker**:
+```yaml docker-compose.yml
+services:
+  price-tracker:
+    image: price-tracker
+    environment:
+      - TZ=America/Los_Angeles
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+```
+
+<Tip>
+Restart the bot after changing the system timezone for cron schedules to use the new timezone.
+</Tip>
+
+## Performance Optimization
+
+### Rate Limiting
+
+The bot includes delays to avoid overwhelming Amazon and Telegram:
+
+**Between products during price checks** (index.mjs:214):
+```javascript
+await new Promise((r) => setTimeout(r, 900));
+```
+
+**Between chat notifications** (index.mjs:242):
+```javascript
+await new Promise((r) => setTimeout(r, 500));
+```
+
+**Between daily summaries** (index.mjs:725):
+```javascript
+await new Promise(r => setTimeout(r, 400));
+```
+
+### Adjusting Delays
+
+If you encounter rate limiting, increase these delays:
+
+```javascript
+// Slower scraping to avoid detection
+await new Promise((r) => setTimeout(r, 2000));  // 2 seconds instead of 900ms
+
+// More conservative Telegram messaging
+await new Promise((r) => setTimeout(r, 1000));  // 1 second instead of 500ms
+```
+
+<Note>
+Longer delays mean slower price checks but reduced risk of being rate-limited or blocked by Amazon.
+</Note>
+
+### Memory Management
+
+With many products, the history can grow large. The `HISTORY_LIMIT` prevents unbounded growth:
+
+```javascript index.mjs (lines 69, 196)
+const HISTORY_LIMIT = 120;
+
+// In checkPrices function:
+updated.history.push({ date: new Date().toISOString(), price: scraped.price });
+if (updated.history.length > HISTORY_LIMIT) 
+  updated.history = updated.history.slice(-HISTORY_LIMIT);
+```
+
+**Memory impact**:
+- 10 products × 120 history entries × ~50 bytes = ~60 KB
+- 100 products × 120 history entries × ~50 bytes = ~600 KB
+
+<Tip>
+For tracking 100+ products, consider reducing `HISTORY_LIMIT` to 60 (5 days of history) or increasing price check intervals to every 4 hours.
+</Tip>
+
+## Monitoring and Debugging
+
+### Console Logging
+
+The bot outputs cron execution logs:
+
+```
+🔄 Cron: revisión automática de precios...
+⏳ Iniciando revisión de precios...
+🎉 2 productos cambiados — notificando a 3 chats.
+```
+
+### Verifying Cron Syntax
+
+Use [crontab.guru](https://crontab.guru/) to validate and understand cron expressions:
+
+- `0 20 * * *` → ["At 20:00"](https://crontab.guru/#0_20_*_*_*)
+- `0 */2 * * *` → ["At minute 0 past every 2nd hour"](https://crontab.guru/#0_*/2_*_*_*)
+
+### Testing Schedules
+
+To test without waiting for scheduled times, temporarily change to run every minute:
+
+```javascript
+// TESTING ONLY - runs every minute
+cron.schedule("* * * * *", async () => {
+  console.log("🔄 Test: revisión automática de precios...");
+  try {
+    await checkPrices();
+  } catch (err) {
+    console.error("❌ Error en cron checkPrices:", err.message);
+  }
+});
+```
+
+<Warning>
+**Do not use `* * * * *` in production!** It runs every minute and will quickly exhaust resources and trigger rate limits.
+</Warning>
+
+## Manual Execution
+
+### Via Telegram Commands
+
+Users don't need to wait for scheduled checks:
+
+- `/check` - Manually trigger price check for all products
+- `/list` - View daily summary UI without waiting for 20:00
+
+### Via Code
+
+Call the functions directly for testing:
+
+```javascript
+// Manually invoke price check
+await checkPrices();
+
+// Send summary to specific chat
+await dailySummary(123456789);
+```
+
+## Troubleshooting
+
+### Cron Jobs Not Running
+
+**Symptom**: Scheduled tasks never execute
+
+**Solutions**:
+1. Verify bot is running continuously (not restarting)
+2. Check console for syntax errors in cron expressions
+3. Ensure `node-cron` is installed: `npm list node-cron`
+
+### Wrong Execution Times
+
+**Symptom**: Tasks run at unexpected hours
+
+**Solutions**:
+1. Check server timezone: `date`
+2. Verify cron expression using [crontab.guru](https://crontab.guru/)
+3. Remember: 20:00 server time may differ from your local time
+
+### Duplicate Executions
+
+**Symptom**: Price checks run multiple times per hour
+
+**Solution**: Ensure you haven't defined the same cron schedule multiple times in the code
+
+### Rate Limiting
+
+**Symptom**: Amazon blocks requests or Telegram rate limits messages
+
+**Solutions**:
+1. Increase delays between requests (see Performance Optimization)
+2. Reduce check frequency (every 4 hours instead of 2)
+3. Use residential proxies for Amazon requests (advanced)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Setup Guide" icon="gear" href="./setup">
+    Review initial setup and configuration
+  </Card>
+  <Card title="Environment Variables" icon="key" href="./environment-variables">
+    Configure Telegram bot token and secrets
+  </Card>
+</CardGroup>

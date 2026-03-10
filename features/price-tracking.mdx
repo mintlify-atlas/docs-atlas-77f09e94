@@ -1,0 +1,259 @@
+---
+title: 'Price Tracking'
+description: 'Automated price monitoring system for Amazon products'
+---
+
+## Overview
+
+The Price Tracker Bot uses **Playwright** to scrape Amazon product pages and monitor price changes automatically. The system runs on a **2-hour schedule** using cron jobs, checking all tracked products and notifying users when prices drop.
+
+## How Price Tracking Works
+
+### Scraping Mechanism
+
+The bot uses a headless Chromium browser to extract product information from Amazon pages:
+
+```javascript
+async function scrapeProduct(page, url) {
+  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
+  await page.waitForTimeout(800);
+
+  const title = await page.evaluate(() => {
+    const selectors = [
+      "#productTitle",
+      "h1#title",
+      "h1.a-size-large",
+      'h1[data-automation-id="product-title"]',
+      ".product-title"
+    ];
+    for (const s of selectors) {
+      const el = document.querySelector(s);
+      if (el?.textContent?.trim()) return el.textContent.trim();
+    }
+    return null;
+  });
+
+  // Similar extraction for price and image...
+}
+```
+
+<Info>
+The scraper uses **multiple selector fallbacks** to ensure compatibility across different Amazon page layouts.
+</Info>
+
+### URL Sanitization
+
+All Amazon URLs are sanitized before storage to ensure consistency:
+
+```javascript
+function sanitizeAmazonURL(url) {
+  try {
+    const u = new URL(url);
+    // Keep pathname and /dp/... or /gp/... if present; strip query & hash
+    return u.origin + u.pathname;
+  } catch {
+    return url.split("?")[0];
+  }
+}
+```
+
+This removes tracking parameters and query strings, storing only the essential product URL.
+
+## Price Comparison Logic
+
+The `checkPrices()` function (lines 139-250) performs the following operations:
+
+### 1. Price Change Detection
+
+```javascript
+// Detect price drop compared to stored.price (originalPrice)
+if (scraped.price < originalPrice) {
+  const diff = (originalPrice - scraped.price).toFixed(2);
+  const pct = (((originalPrice - scraped.price) / originalPrice) * 100).toFixed(1);
+
+  const msg = `🚨 ¡Precio reducido!
+
+*${escapeMD(updated.title)}*
+
+💰 Precio anterior: $${originalPrice}
+🎯 Precio actual: $${scraped.price}
+💵 Ahorro: $${diff} (${pct}% menos)
+📉 Histórico más bajo: $${updated.lowestPrice}
+
+[Ver en Amazon](${sanitized})`;
+
+  productsChanged.push({ url: sanitized, message: msg, imageUrl: updated.imageUrl });
+}
+```
+
+<Note>
+The bot compares the **current scraped price** against the **previously stored price** to detect drops.
+</Note>
+
+### 2. Historical Tracking
+
+Every price check adds a new entry to the product's history:
+
+```javascript
+// Always append history
+updated.history.push({ date: new Date().toISOString(), price: scraped.price });
+if (updated.history.length > HISTORY_LIMIT) {
+  updated.history = updated.history.slice(-HISTORY_LIMIT);
+}
+```
+
+<Tip>
+The history is limited to the **last 120 entries** to prevent excessive data growth.
+</Tip>
+
+### 3. Lowest Price Tracking
+
+The system maintains a record of the lowest observed price:
+
+```javascript
+lowestPrice: Math.min(scraped.price, originalLowest)
+```
+
+## Automated Schedule
+
+<CardGroup cols={2}>
+  <Card title="Every 2 Hours" icon="clock">
+    Automatic price checks run on a cron schedule
+  </Card>
+  <Card title="Cron Expression" icon="calendar">
+    `0 */2 * * *` - At minute 0 past every 2nd hour
+  </Card>
+</CardGroup>
+
+### Cron Implementation
+
+From lines 732-740:
+
+```javascript
+// Check prices every 2 hours
+cron.schedule("0 */2 * * *", async () => {
+  console.log("🔄 Cron: revisión automática de precios...");
+  try {
+    await checkPrices();
+  } catch (err) {
+    console.error("❌ Error en cron checkPrices:", err.message);
+  }
+});
+```
+
+## Manual Price Checks
+
+Users can trigger immediate price checks using the `/check` command:
+
+```javascript
+bot.onText(/\/check/, async (msg) => {
+  const chatId = msg.chat.id;
+  const loading = await bot.sendMessage(chatId, "⏳ Revisando precios de todos los productos...");
+  try {
+    await checkPrices();
+    await bot.editMessageText("✅ Revisión completada. Si hubo cambios, los notifiqué.", {
+      chat_id: chatId,
+      message_id: loading.message_id
+    });
+  } catch (err) {
+    console.error("❌ Error en /check:", err.message);
+  }
+});
+```
+
+## Error Handling
+
+The system gracefully handles scraping errors:
+
+```javascript
+const errors = [];
+
+for (const key of keys) {
+  const scraped = await scrapeProduct(page, sanitized);
+  if (scraped.error) {
+    errors.push(`Error en ${stored.title || key}: ${scraped.error}`);
+    // Even on error, update lastChecked
+    stored.lastChecked = new Date().toISOString();
+    priceData[key] = stored;
+    await new Promise((r) => setTimeout(r, 800));
+    continue;
+  }
+}
+
+if (errors.length) console.warn("⚠️ Errores durante la revisión:", errors);
+```
+
+<Info>
+Even when scraping fails, the `lastChecked` timestamp is updated to track monitoring attempts.
+</Info>
+
+## Rate Limiting
+
+To avoid overwhelming Amazon servers, the bot implements small delays:
+
+```javascript
+// Small pause to avoid flooding
+await new Promise((r) => setTimeout(r, 900));
+```
+
+Each product check includes a **900ms delay** between requests.
+
+## Data Persistence
+
+All price data is stored in `prices.json`:
+
+```javascript
+function saveData() {
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify({ 
+      products: priceData, 
+      chats: [...chats] 
+    }, null, 2));
+  } catch (err) {
+    console.error("❌ Error guardando datos:", err.message);
+  }
+}
+```
+
+<Accordion title="Example prices.json structure">
+```json
+{
+  "products": {
+    "https://www.amazon.com/dp/B08N5WRWNW": {
+      "url": "https://www.amazon.com/dp/B08N5WRWNW",
+      "title": "Product Name",
+      "price": 29.99,
+      "lowestPrice": 24.99,
+      "imageUrl": "https://...",
+      "lastChecked": "2026-03-10T15:30:00.000Z",
+      "addedDate": "2026-03-01T10:00:00.000Z",
+      "addedBy": 123456789,
+      "history": [
+        { "date": "2026-03-01T10:00:00.000Z", "price": 34.99 },
+        { "date": "2026-03-01T12:00:00.000Z", "price": 29.99 }
+      ]
+    }
+  },
+  "chats": [123456789]
+}
+```
+</Accordion>
+
+## Browser Management
+
+Each price check cycle uses a single browser instance:
+
+```javascript
+const browser = await chromium.launch({ 
+  headless: true, 
+  args: ["--no-sandbox", "--disable-dev-shm-usage"] 
+});
+const context = await browser.newContext();
+const page = await context.newPage();
+
+// ... check all products ...
+
+await browser.close();
+```
+
+This approach optimizes resource usage by reusing the same browser session for all products.

@@ -1,0 +1,374 @@
+---
+title: Troubleshooting
+description: Common issues and solutions for Price Tracker Bot
+---
+
+## Common Issues
+
+This guide covers common issues you may encounter when running the Price Tracker Bot and how to resolve them.
+
+<AccordionGroup>
+  <Accordion title="Bot Not Responding">
+    ### Symptoms
+    - Bot doesn't reply to commands
+    - No messages received from the bot
+    - Bot appears offline in Telegram
+
+    ### Possible Causes & Solutions
+
+    <Warning>
+      **Missing TELEGRAM_TOKEN**: If you see the error message `❌ TELEGRAM_TOKEN no definido en .env`, your bot token is not configured.
+    </Warning>
+
+    **Solution:**
+    1. Create a `.env` file in the project root
+    2. Add your token: `TELEGRAM_TOKEN=your_token_here`
+    3. Get your token from [@BotFather](https://t.me/botfather) on Telegram
+    4. Restart the bot
+
+    The bot checks for this token at startup (index.mjs:12-14) and will exit if not found.
+
+    ---
+
+    **Polling Errors**: Check your console for messages like `❌ Polling error:`
+
+    **Common polling issues:**
+    - Network connectivity problems
+    - Token revoked or invalid
+    - Multiple instances of the bot running
+
+    **Solution:**
+    1. Verify your token is correct
+    2. Check your internet connection
+    3. Stop all other instances: `pkill -f "node.*index.mjs"`
+    4. Restart the bot
+
+    The bot logs polling errors at index.mjs:715.
+  </Accordion>
+
+  <Accordion title="Scraping Failures">
+    ### Symptoms
+    - Error: `❌ No se pudo obtener información del producto`
+    - Products fail to add
+    - Price checks return errors
+
+    ### Playwright Not Installed
+
+    <Warning>
+      If you see browser launch errors, Playwright browsers may not be installed.
+    </Warning>
+
+    **Solution:**
+    ```bash
+    npx playwright install chromium
+    ```
+
+    The bot uses Playwright's Chromium browser for scraping (index.mjs:6, 148).
+
+    ---
+
+    ### Amazon Blocking Requests
+
+    **Symptoms:**
+    - Error: `Título no encontrado` (index.mjs:127)
+    - Error: `Precio inválido o no encontrado` (index.mjs:129)
+
+    **Possible causes:**
+    - Amazon detected automated scraping
+    - Product page structure changed
+    - Geographic restrictions
+    - Rate limiting
+
+    **Solutions:**
+
+    <Tip>
+      The bot includes delays between requests (800-900ms at index.mjs:78, 214) to avoid rate limiting.
+    </Tip>
+
+    1. **Wait and retry**: Amazon may temporarily block requests
+    2. **Check URL**: Ensure the URL is a valid Amazon product page
+    3. **Try different products**: Test with multiple products to isolate the issue
+    4. **Review selectors**: Amazon may have changed their HTML structure
+
+    The scraper tries multiple CSS selectors for title (index.mjs:81-93), price (index.mjs:96-109), and images (index.mjs:112-125).
+
+    ---
+
+    ### Invalid Product URL
+
+    **Error messages:**
+    - `❌ URL inválida. Debe iniciar con http(s).` (index.mjs:401)
+
+    **Solution:**
+    Ensure your URL:
+    - Starts with `http://` or `https://`
+    - Points to an Amazon product page
+    - Contains product identifier (`/dp/` or `/gp/`)
+
+    Example valid URL:
+    ```
+    https://www.amazon.com/dp/B08N5WRWNW
+    ```
+  </Accordion>
+
+  <Accordion title="Price Not Updating">
+    ### Symptoms
+    - Prices never change
+    - No automatic checks happening
+    - `/check` command times out
+
+    ### Cron Jobs Not Running
+
+    The bot has two scheduled tasks:
+    - **Price checks**: Every 2 hours (index.mjs:733)
+    - **Daily summary**: Every day at 20:00 (index.mjs:720)
+
+    **Verify cron is working:**
+    - Check console for: `🔄 Cron: revisión automática de precios...`
+    - Look for: `⏳ Iniciando revisión de precios...`
+
+    **Common issues:**
+    - Bot process stopped or crashed
+    - System time incorrect
+    - No products added to track
+
+    **Solution:**
+    1. Keep the bot running continuously
+    2. Use a process manager like `pm2`:
+       ```bash
+       npm install -g pm2
+       pm2 start index.mjs --name price-tracker
+       pm2 save
+       ```
+    3. Check system time: `date`
+
+    ---
+
+    ### Errors During Price Checks
+
+    **Console messages to look for:**
+    - `❌ Error en cron checkPrices:` (index.mjs:738)
+    - `⚠️ Errores durante la revisión:` (index.mjs:249)
+
+    The bot continues checking other products even if one fails (index.mjs:165-172).
+
+    **Debug steps:**
+    1. Run manual check: `/check` command
+    2. Watch console output for specific errors
+    3. Test individual product URLs
+    4. Review error logs for patterns
+
+    ---
+
+    ### No Products Being Tracked
+
+    If you see: `ℹ️ No hay productos para revisar.` (index.mjs:142)
+
+    **Solution:**
+    - Add products using `/add [URL]`
+    - Verify products saved: `/list`
+    - Check `prices.json` file exists and contains data
+  </Accordion>
+
+  <Accordion title="Data Loss Issues">
+    ### Symptoms
+    - Products disappear after restart
+    - Price history missing
+    - Chat registrations lost
+
+    ### File Permission Problems
+
+    <Warning>
+      Error: `❌ Error guardando datos:` (index.mjs:46) indicates file write failures.
+    </Warning>
+
+    **Check permissions:**
+    ```bash
+    ls -la prices.json
+    ```
+
+    **Fix permissions:**
+    ```bash
+    chmod 644 prices.json
+    ```
+
+    The bot saves data to `prices.json` after every change (index.mjs:20, 41-48).
+
+    ---
+
+    ### JSON Corruption
+
+    **Error:** `❌ Error al cargar datos:` (index.mjs:32)
+
+    This happens when `prices.json` contains invalid JSON.
+
+    **Solution:**
+    1. Backup the file: `cp prices.json prices.json.backup`
+    2. Validate JSON:
+       ```bash
+       cat prices.json | python -m json.tool
+       ```
+    3. Fix syntax errors or restore from backup
+    4. If unrecoverable, delete and start fresh:
+       ```bash
+       rm prices.json
+       ```
+
+    ---
+
+    ### Disk Space Issues
+
+    **Check available space:**
+    ```bash
+    df -h .
+    ```
+
+    The bot stores:
+    - Product data in `prices.json`
+    - Up to 120 price history entries per product (HISTORY_LIMIT at index.mjs:69)
+
+    <Note>
+      History is automatically limited to the last 120 entries per product (index.mjs:196).
+    </Note>
+
+    ---
+
+    ### Data File Not Created
+
+    If you see: `ℹ️ No existe prices.json — se creará al guardar.` (index.mjs:37)
+
+    This is normal on first run. The file is created automatically when you add your first product.
+
+    **Verify file creation:**
+    1. Add a product: `/add [URL]`
+    2. Check file exists: `ls -la prices.json`
+    3. Review contents: `cat prices.json`
+  </Accordion>
+
+  <Accordion title="Browser / Memory Issues">
+    ### Symptoms
+    - Bot crashes during price checks
+    - High memory usage
+    - Timeouts on `/check` or `/add`
+
+    ### Browser Launch Failures
+
+    The bot launches Chromium with specific args (index.mjs:148, 412):
+    ```javascript
+    { headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"] }
+    ```
+
+    **Solutions:**
+
+    <Tip>
+      The `--no-sandbox` flag is necessary when running as root or in containers.
+    </Tip>
+
+    1. **Install browser dependencies (Linux):**
+       ```bash
+       sudo apt-get install -y \
+         libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 \
+         libcups2 libdrm2 libxkbcommon0 libxcomposite1 \
+         libxdamage1 libxrandr2 libgbm1 libpango-1.0-0 \
+         libcairo2 libasound2
+       ```
+
+    2. **Increase shared memory (Docker):**
+       ```bash
+       docker run --shm-size=2gb ...
+       ```
+
+    ---
+
+    ### Timeout Errors
+
+    **Default timeout:** 60 seconds (index.mjs:75)
+
+    If pages load slowly:
+    1. Check internet speed
+    2. Try different Amazon region
+    3. Test with simpler products (fewer images/reviews)
+
+    ---
+
+    ### Memory Leaks
+
+    The bot properly closes browsers after each operation:
+    - Price checks: index.mjs:217
+    - Add product: index.mjs:417
+    - Edit product: index.mjs:566
+    - Chart generation: index.mjs:305
+
+    **Monitor memory:**
+    ```bash
+    ps aux | grep node
+    ```
+
+    **If memory grows continuously:**
+    1. Restart the bot daily using cron
+    2. Reduce check frequency
+    3. Limit number of tracked products
+  </Accordion>
+
+  <Accordion title="Notification Issues">
+    ### Symptoms
+    - No price drop alerts received
+    - Some chats not receiving notifications
+    - Error sending messages
+
+    ### Chat Not Registered
+
+    The bot auto-registers chats on first message (index.mjs:705-712).
+
+    **Verify registration:**
+    1. Send `/start` to the bot
+    2. Check console for: `🎉 Nuevo chat registrado: [chatId]`
+
+    ---
+
+    ### Message Send Failures
+
+    **Error:** `❌ Error enviando notificación a [chatId]:` (index.mjs:239)
+
+    **Causes:**
+    - User blocked the bot
+    - Chat no longer exists
+    - Bot doesn't have permission
+
+    The bot continues notifying other chats even if one fails (index.mjs:223-244).
+
+    ---
+
+    ### No Price Drops Detected
+
+    The bot only notifies when price **decreases** (index.mjs:199-207).
+
+    **Check logic:**
+    - Compares `scraped.price < originalPrice`
+    - Calculates difference and percentage
+    - Shows historical lowest price
+
+    **If prices clearly dropped but no alert:**
+    1. Check console: `ℹ️ No se detectaron bajadas de precio`
+    2. Verify price data in `prices.json`
+    3. Run `/check` manually to test
+    4. Review console for comparison values
+  </Accordion>
+</AccordionGroup>
+
+## Getting Help
+
+If you're still experiencing issues:
+
+1. **Check console logs** for error messages
+2. **Review prices.json** for data integrity
+3. **Test with a fresh product** to isolate the problem
+4. **Open an issue** on GitHub with:
+   - Error messages from console
+   - Steps to reproduce
+   - Your environment (OS, Node version)
+   - Relevant section of `prices.json` (redact URLs if sensitive)
+
+<Note>
+  Most errors are logged with `❌` prefix in the console. Always check logs first when troubleshooting.
+</Note>

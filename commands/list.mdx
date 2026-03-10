@@ -1,0 +1,289 @@
+---
+title: /list Command
+description: View all products in your tracking list with interactive controls
+---
+
+## Overview
+
+The `/list` command displays all Amazon products currently being tracked. It provides an interactive interface with buttons to view details, manage products, and trigger price checks.
+
+## Syntax
+
+```bash
+/list
+```
+
+<Note>
+This command takes no parameters - it shows all products associated with your chat.
+</Note>
+
+## Features
+
+The `/list` command provides:
+
+- **Product Summary** - Count of tracked products
+- **Interactive Buttons** - Click to view product details
+- **Bulk Actions** - Delete all products or check prices
+- **Product Details View** - Detailed information when selecting a product
+
+## Example Usage
+
+### Basic List View
+
+```bash
+/list
+```
+
+**Bot Response:**
+```
+📊 Productos en seguimiento: 3
+
+Selecciona un producto para ver detalles:
+
+[📦 Apple AirPods Pro (2nd Gene...]
+[📦 Samsung Galaxy S23 Ultra 51...]
+[📦 Sony WH-1000XM5 Wireless He...]
+[🗑️ Eliminar todos]
+[🔄 Revisar precios ahora]
+```
+
+### Empty List
+
+```bash
+/list
+```
+
+**Response:**
+```
+📭 No tienes productos en seguimiento.
+
+Usa /add [url] para agregar uno.
+```
+
+## Interactive Actions
+
+### Product Selection
+
+Clicking on a product button shows detailed information:
+
+```
+Apple AirPods Pro (2nd Generation)
+
+💰 Precio actual: $249.99
+📉 Precio más bajo visto: $229.99
+📅 Agregado: 3/1/2026
+🔄 Última revisión: 3/10/2026
+💰 Ahorro desde el mínimo: $20.00
+
+[🛒 Ver en Amazon]
+[✍🏻 Editar URL] [🗑️ Eliminar]
+[⏪ Volver a la lista]
+[📈 Ver gráfico]
+```
+
+<Tip>
+If a product image is available, the bot will display it along with the caption.
+</Tip>
+
+### Inline Buttons
+
+Each product detail view includes:
+
+<ParamField path="🛒 Ver en Amazon" type="button">
+  Opens the product page on Amazon
+</ParamField>
+
+<ParamField path="✍🏻 Editar URL" type="button">
+  Shows instructions to update the product URL using `/edit`
+</ParamField>
+
+<ParamField path="🗑️ Eliminar" type="button">
+  Removes the product from tracking immediately
+</ParamField>
+
+<ParamField path="⏪ Volver a la lista" type="button">
+  Returns to the main product list
+</ParamField>
+
+<ParamField path="📈 Ver gráfico" type="button">
+  Generates a price history chart for the product
+</ParamField>
+
+## Bulk Actions
+
+### Delete All Products
+
+Clicking **🗑️ Eliminar todos** removes all tracked products:
+
+```
+🗑️ Se eliminaron 3 productos.
+```
+
+<Warning>
+This action is irreversible. All tracking history will be permanently deleted.
+</Warning>
+
+### Check Prices Now
+
+Clicking **🔄 Revisar precios ahora** triggers an immediate price check:
+
+```
+⏳ Iniciando revisión de precios...
+
+[After completion]
+✅ Revisión completada.
+```
+
+## Product Details Displayed
+
+When viewing a product, the following information is shown:
+
+<ParamField path="title" type="string">
+  Full product title from Amazon
+</ParamField>
+
+<ParamField path="price" type="number">
+  Current price (as of last check)
+</ParamField>
+
+<ParamField path="lowestPrice" type="number">
+  Lowest price ever recorded for this product
+</ParamField>
+
+<ParamField path="addedDate" type="date">
+  Date when the product was added to tracking
+</ParamField>
+
+<ParamField path="lastChecked" type="date">
+  Date of the most recent price check
+</ParamField>
+
+<ParamField path="savings" type="number">
+  Potential savings if current price is higher than historical low
+</ParamField>
+
+## Code Implementation
+
+The `/list` command is implemented in `index.mjs:488-489`:
+
+```javascript index.mjs
+bot.onText(/\/list/, async (msg) => dailySummary(msg.chat.id));
+```
+
+The `dailySummary()` function (lines 336-356) handles the display:
+
+```javascript index.mjs
+async function dailySummary(chatId) {
+  const urls = Object.keys(priceData);
+  if (!urls.length) {
+    return bot.sendMessage(chatId, "📭 No tienes productos en seguimiento.\n\nUsa /add [url] para agregar uno.");
+  }
+
+  const inlineKeyboard = urls.map((u) => {
+    const p = priceData[u];
+    const title = p?.title || u;
+    const truncated = title.length > 30 ? `${title.slice(0, 30)}...` : title;
+    return [{ text: `📦 ${truncated}`, callback_data: `select_product:${u}` }];
+  });
+
+  inlineKeyboard.push([{ text: "🗑️ Eliminar todos", callback_data: "delete_all" }]);
+  inlineKeyboard.push([{ text: "🔄 Revisar precios ahora", callback_data: "check_prices" }]);
+
+  await bot.sendMessage(chatId, `📊 *Productos en seguimiento: ${urls.length}*\n\nSelecciona un producto para ver detalles:`, {
+    parse_mode: "Markdown",
+    reply_markup: { inline_keyboard: inlineKeyboard }
+  });
+}
+```
+
+## Callback Query Handlers
+
+The interactive buttons are handled by callback queries (lines 626-702):
+
+```javascript index.mjs
+bot.on("callback_query", async (callbackQuery) => {
+  const data = callbackQuery.data;
+  const msg = callbackQuery.message;
+  const chatId = msg.chat.id;
+
+  if (data.startsWith("select_product:")) {
+    const productUrl = data.substring("select_product:".length);
+    const product = priceData[productUrl];
+    // ... display product details
+  }
+  else if (data.startsWith("delete_product:")) {
+    // ... handle product deletion
+  }
+  else if (data === "delete_all") {
+    const totalProducts = Object.keys(priceData).length;
+    priceData = {};
+    saveData();
+    await bot.sendMessage(chatId, `🗑️ Se eliminaron ${totalProducts} productos.`);
+  }
+  else if (data === "list") {
+    await dailySummary(chatId);
+  }
+  else if (data === "check_prices") {
+    await checkPrices();
+    // ... send completion message
+  }
+  // ... other handlers
+});
+```
+
+## Use Cases
+
+### Daily Monitoring
+
+Check your tracked products each morning:
+```bash
+/list
+```
+
+Review any price changes and decide whether to purchase.
+
+### Before Adding New Products
+
+Verify a product isn't already tracked:
+```bash
+/list
+```
+
+Avoid duplicate entries by checking the list first.
+
+### Cleanup
+
+Remove products you're no longer interested in:
+1. Run `/list`
+2. Click on the product
+3. Click **🗑️ Eliminar**
+
+<Tip>
+The list view truncates long product titles to 30 characters for readability. Click on a product to see the full title.
+</Tip>
+
+## Automatic Daily Summary
+
+The bot automatically sends a daily summary at 8:00 PM (server timezone) with the same format as `/list`:
+
+```javascript index.mjs
+cron.schedule("0 20 * * *", async () => {
+  console.log("📄 Envío de resumen diario...");
+  for (const chatId of chats) {
+    try {
+      await dailySummary(chatId);
+      await new Promise(r => setTimeout(r, 400));
+    } catch (err) {
+      console.error(`❌ Error enviando resumen a ${chatId}:`, err.message);
+    }
+  }
+});
+```
+
+## Related Commands
+
+- [/add](/commands/add) - Add a new product to the list
+- [/remove](/commands/remove) - Remove a product from the list
+- [/check](/commands/check) - Manually trigger a price check
+- [/stats](/commands/stats) - View overall statistics
+- [/chart](/commands/chart) - View price history chart

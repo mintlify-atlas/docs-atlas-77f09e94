@@ -1,0 +1,351 @@
+---
+title: /edit Command
+description: Update the URL of a tracked product while preserving its price history
+---
+
+## Overview
+
+The `/edit` command allows you to update the Amazon URL of a tracked product while preserving its price history and tracking data. This is useful when Amazon changes product URLs or when you want to switch to a different variation of the same product.
+
+## Syntax
+
+```bash
+/edit [current_url] [new_url]
+```
+
+<ParamField path="current_url" type="string" required>
+  The Amazon URL currently being tracked
+</ParamField>
+
+<ParamField path="new_url" type="string" required>
+  The new Amazon URL to track instead
+</ParamField>
+
+## How It Works
+
+1. **URL Validation** - Sanitizes both old and new URLs
+2. **Product Lookup** - Finds the existing product by the old URL
+3. **Web Scraping** - Fetches information from the new URL
+4. **Data Merging** - Combines old history with new product data
+5. **Database Update** - Replaces the old entry with the new one
+6. **Confirmation** - Sends success message with before/after titles
+
+<Note>
+Price history from the old product is preserved and carried over to the new URL.
+</Note>
+
+## Examples
+
+### Basic URL Update
+
+```bash
+/edit https://www.amazon.com/dp/B08N5WRWNW https://www.amazon.com/dp/B0CHWRXH8B
+```
+
+**Bot Response (Initial):**
+```
+⏳ Actualizando producto...
+```
+
+**Bot Response (After Completion):**
+```
+✅ Producto actualizado
+
+Antes: Apple AirPods Pro (2nd Generation)
+Ahora: Apple AirPods Pro (2nd Generation) with MagSafe Case
+```
+
+### Update to Different Variation
+
+```bash
+/edit https://www.amazon.com/dp/B08J5F3G18 https://www.amazon.com/dp/B08J6FDZTQ
+```
+
+Switch from one product variant (color, size, etc.) to another while keeping the price history.
+
+### Update After Amazon Redirect
+
+```bash
+/edit https://www.amazon.com/old-link https://www.amazon.com/new-link
+```
+
+Sometimes Amazon changes product URLs. Use `/edit` to update without losing tracking data.
+
+<Tip>
+You can use the **✍🏻 Editar URL** button in `/list` to get the correct command format pre-filled.
+</Tip>
+
+## Data Preservation
+
+When editing a product URL, the following data is **preserved**:
+
+<ParamField path="history" type="array">
+  Complete price history from the old product
+</ParamField>
+
+<ParamField path="lowestPrice" type="number">
+  The historical minimum price (compared with new product's initial price)
+</ParamField>
+
+<ParamField path="addedDate" type="string">
+  Original date when the product was first added
+</ParamField>
+
+<ParamField path="addedBy" type="number">
+  Chat ID of the user who originally added the product
+</ParamField>
+
+<ParamField path="imageUrl" type="string">
+  Previous image if the new URL doesn't have one
+</ParamField>
+
+## Data Updated
+
+The following data is **updated** from the new URL:
+
+<ParamField path="url" type="string">
+  Updated to the new sanitized URL
+</ParamField>
+
+<ParamField path="title" type="string">
+  Product title from the new URL
+</ParamField>
+
+<ParamField path="price" type="number">
+  Current price from the new URL
+</ParamField>
+
+<ParamField path="lastChecked" type="string">
+  Updated to the current timestamp
+</ParamField>
+
+<ParamField path="imageUrl" type="string">
+  Product image from the new URL (if available)
+</ParamField>
+
+## Code Implementation
+
+The `/edit` command is implemented in `index.mjs:545-610`:
+
+```javascript index.mjs
+bot.onText(/\/edit (.+?) (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const oldRaw = match[1].trim();
+  const newRaw = match[2].trim();
+
+  const oldKey = sanitizeAmazonURL(oldRaw);
+  const newKey = sanitizeAmazonURL(newRaw);
+
+  if (!priceData[oldKey]) {
+    return bot.sendMessage(chatId, "⚠️ No se encontró producto con la URL original. Usa /list", { parse_mode: "Markdown" });
+  }
+
+  const loading = await bot.sendMessage(chatId, "⏳ Actualizando producto...");
+
+  try {
+    // Scrape new url
+    const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+
+    const scraped = await scrapeProduct(page, newKey);
+    await browser.close();
+
+    if (scraped.error) {
+      return bot.editMessageText("❌ No se pudo obtener información de la nueva URL. Asegúrate de que es válida.", {
+        chat_id: chatId,
+        message_id: loading.message_id
+      });
+    }
+
+    const prev = priceData[oldKey];
+    const lowest = typeof prev.lowestPrice === "number" ? prev.lowestPrice : prev.price || scraped.price;
+
+    priceData[newKey] = {
+      url: newKey,
+      title: scraped.title,
+      price: scraped.price,
+      lowestPrice: Math.min(scraped.price, lowest),
+      imageUrl: scraped.imageUrl || prev.imageUrl || null,
+      addedDate: prev.addedDate || new Date().toISOString(),
+      addedBy: prev.addedBy || chatId,
+      lastChecked: new Date().toISOString(),
+      history: Array.isArray(prev.history) ? prev.history.slice() : []
+    };
+
+    // add initial history point for the new url
+    priceData[newKey].history.push({ date: new Date().toISOString(), price: scraped.price });
+    if (priceData[newKey].history.length > HISTORY_LIMIT) priceData[newKey].history = priceData[newKey].history.slice(-HISTORY_LIMIT);
+
+    // remove old key
+    delete priceData[oldKey];
+    saveData();
+
+    await bot.editMessageText(`✅ *Producto actualizado*\n\nAntes: ${escapeMD(prev.title || oldKey)}\nAhora: ${escapeMD(scraped.title)}`, {
+      chat_id: chatId,
+      message_id: loading.message_id,
+      parse_mode: "Markdown"
+    });
+  } catch (err) {
+    console.error("❌ Error en /edit:", err.message);
+    await bot.editMessageText("❌ Ocurrió un error al editar el producto. Intenta de nuevo.", {
+      chat_id: chatId,
+      message_id: loading.message_id
+    });
+  }
+});
+```
+
+## History Merging
+
+The command preserves the old history and adds a new entry:
+
+```javascript
+history: Array.isArray(prev.history) ? prev.history.slice() : []
+
+// Add initial history point for the new URL
+priceData[newKey].history.push({ date: new Date().toISOString(), price: scraped.price });
+if (priceData[newKey].history.length > HISTORY_LIMIT) {
+  priceData[newKey].history = priceData[newKey].history.slice(-HISTORY_LIMIT);
+}
+```
+
+<Note>
+History is capped at 120 entries. If the combined history exceeds this limit, the oldest entries are removed.
+</Note>
+
+## Lowest Price Calculation
+
+The lowest price is recalculated to include both the old and new product:
+
+```javascript
+const lowest = typeof prev.lowestPrice === "number" ? prev.lowestPrice : prev.price || scraped.price;
+
+priceData[newKey] = {
+  // ...
+  lowestPrice: Math.min(scraped.price, lowest),
+  // ...
+};
+```
+
+This ensures you maintain the true historical minimum price.
+
+## Error Handling
+
+### Product Not Found
+
+```bash
+/edit https://www.amazon.com/invalid https://www.amazon.com/new
+```
+
+**Response:**
+```
+⚠️ No se encontró producto con la URL original. Usa /list
+```
+
+<Tip>
+Use `/list` to find the exact URL currently being tracked.
+</Tip>
+
+### Invalid New URL
+
+```bash
+/edit https://www.amazon.com/dp/B08N5WRWNW https://invalid-url
+```
+
+**Response:**
+```
+❌ No se pudo obtener información de la nueva URL. Asegúrate de que es válida.
+```
+
+### Scraping Error
+
+**Response:**
+```
+❌ Ocurrió un error al editar el producto. Intenta de nuevo.
+```
+
+Common causes:
+- Invalid new URL
+- Network issues
+- Amazon blocking requests
+
+## Interactive Edit via /list
+
+You can trigger the edit command through the `/list` interface:
+
+1. Run `/list`
+2. Click on a product
+3. Click **✍🏻 Editar URL**
+
+**Bot Response:**
+```
+✍🏻 Para editar la URL usa:
+/edit https://www.amazon.com/dp/B08N5WRWNW [nueva_url]
+```
+
+This provides the current URL pre-filled, so you only need to add the new URL.
+
+## Use Cases
+
+### Amazon URL Changed
+
+Amazon sometimes updates product URLs:
+```bash
+/edit https://www.amazon.com/old-url https://www.amazon.com/new-url
+```
+
+### Switch Product Variation
+
+Change from one color/size to another:
+```bash
+/edit https://www.amazon.com/dp/B08J5F3G18 https://www.amazon.com/dp/B08J6FDZTQ
+```
+
+### Consolidate Duplicate Tracking
+
+If you accidentally added similar products:
+```bash
+/edit https://www.amazon.com/variant1 https://www.amazon.com/variant2
+/remove https://www.amazon.com/variant1
+```
+
+### Fix Incorrect URL
+
+If you added the wrong product:
+```bash
+/edit https://www.amazon.com/wrong-product https://www.amazon.com/correct-product
+```
+
+<Warning>
+If the new URL is a completely different product, consider using `/remove` and `/add` instead to avoid mixing price histories.
+</Warning>
+
+## Comparison: /edit vs /remove + /add
+
+| Feature | /edit | /remove + /add |
+|---------|-------|----------------|
+| Preserves history | ✅ Yes | ❌ No |
+| Preserves added date | ✅ Yes | ❌ No |
+| Preserves lowest price | ✅ Yes | ❌ No |
+| Best for variant switches | ✅ Yes | ❌ No |
+| Best for different products | ❌ No | ✅ Yes |
+
+<Tip>
+Use `/edit` when tracking the same product with a different URL. Use `/remove` + `/add` for completely different products.
+</Tip>
+
+## Best Practices
+
+1. **Verify URLs** - Check both URLs are valid before editing
+2. **Same Product** - Only edit for URL changes or variants, not different products
+3. **Use /list** - Get the exact current URL from `/list` to avoid typos
+4. **Check Result** - Run `/list` after editing to verify the change
+5. **View Chart** - Use `/chart` to ensure price history is intact
+
+## Related Commands
+
+- [/add](/commands/add) - Add a new product
+- [/remove](/commands/remove) - Remove a product completely
+- [/list](/commands/list) - View all tracked products
+- [/chart](/commands/chart) - Verify price history after editing

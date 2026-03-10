@@ -1,0 +1,359 @@
+---
+title: 'Environment Variables'
+description: 'Configure environment variables for the Price Tracker Bot'
+icon: 'key'
+---
+
+## Overview
+
+The Price Tracker Bot uses environment variables to securely manage sensitive configuration data. All environment variables are loaded from a `.env` file in the project root.
+
+## Loading Configuration
+
+The bot uses the `dotenv` package to load environment variables:
+
+```javascript index.mjs (lines 5-8)
+import dotenv from "dotenv";
+
+dotenv.config();
+```
+
+This must be called before accessing any environment variables to ensure they're available.
+
+## Required Variables
+
+### TELEGRAM_TOKEN
+
+<ParamField path="TELEGRAM_TOKEN" type="string" required>
+  The authentication token for your Telegram bot. This is the only required environment variable.
+</ParamField>
+
+The `TELEGRAM_TOKEN` is mandatory and validates on startup:
+
+```javascript index.mjs (lines 11-15)
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+if (!TELEGRAM_TOKEN) {
+  console.error("❌ TELEGRAM_TOKEN no definido en .env");
+  process.exit(1);
+}
+```
+
+**Token Format**: A string like `123456789:ABCdefGHIjklMNOpqrsTUVwxyz-1234567890`
+
+<Warning>
+The bot will immediately exit with an error if `TELEGRAM_TOKEN` is not defined. This prevents running without authentication.
+</Warning>
+
+## Getting Your Telegram Bot Token
+
+### Step 1: Contact BotFather
+
+Telegram's [@BotFather](https://t.me/BotFather) manages all bot creation and token generation.
+
+1. Open Telegram and search for `@BotFather`
+2. Start a conversation by clicking **Start** or sending `/start`
+
+### Step 2: Create a New Bot
+
+Send the `/newbot` command to BotFather:
+
+```
+/newbot
+```
+
+BotFather will guide you through the creation process:
+
+1. **Choose a name**: The display name for your bot (e.g., "Price Tracker Bot")
+2. **Choose a username**: Must end in `bot` (e.g., `my_price_tracker_bot`)
+
+<Note>
+Usernames must be unique across all Telegram bots. If your choice is taken, try adding numbers or underscores.
+</Note>
+
+### Step 3: Receive Your Token
+
+Upon successful creation, BotFather sends a message containing:
+
+```
+Done! Congratulations on your new bot. You will find it at t.me/your_bot_username.
+
+Use this token to access the HTTP API:
+123456789:ABCdefGHIjklMNOpqrsTUVwxyz-1234567890
+
+Keep your token secure and store it safely, it can be used by anyone to control your bot.
+```
+
+<Warning>
+**Keep your token secret!** Anyone with access to your token can control your bot. Never commit it to version control or share it publicly.
+</Warning>
+
+### Step 4: Add Token to .env File
+
+Copy the token and add it to your `.env` file:
+
+```bash .env
+TELEGRAM_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz-1234567890
+```
+
+## Token Usage in Code
+
+The token is used to initialize the Telegram bot instance:
+
+```javascript index.mjs (line 17)
+const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
+```
+
+**Configuration options**:
+- `polling: true` - Enables long polling to receive updates from Telegram
+
+<Tip>
+Polling is ideal for development and simple deployments. For production at scale, consider using webhooks instead.
+</Tip>
+
+## Optional Variables
+
+While the bot currently only requires `TELEGRAM_TOKEN`, you may want to add additional environment variables for customization:
+
+### Suggested Optional Variables
+
+<CodeGroup>
+
+```bash .env - Basic Configuration
+TELEGRAM_TOKEN=your_token_here
+```
+
+```bash .env - Extended Configuration
+TELEGRAM_TOKEN=your_token_here
+
+# Optional: Custom data file location
+DATA_FILE=./data/prices.json
+
+# Optional: Logging level
+LOG_LEVEL=info
+
+# Optional: Node environment
+NODE_ENV=production
+```
+
+</CodeGroup>
+
+<Note>
+The extended configuration example shows potential future enhancements. Currently, only `TELEGRAM_TOKEN` is used by the bot.
+</Note>
+
+## Security Best Practices
+
+### 1. Never Commit Secrets
+
+Add `.env` to your `.gitignore`:
+
+```bash .gitignore
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Data files
+prices.json
+prices.backup.*.json
+```
+
+### 2. Use Environment-Specific Files
+
+For multiple environments, use separate env files:
+
+```bash
+.env.development    # Development tokens
+.env.production     # Production tokens
+.env.test          # Test tokens
+```
+
+Load the appropriate file based on your environment:
+
+```javascript
+import dotenv from "dotenv";
+
+const envFile = process.env.NODE_ENV === 'production' 
+  ? '.env.production' 
+  : '.env.development';
+
+dotenv.config({ path: envFile });
+```
+
+### 3. Restrict File Permissions
+
+Limit who can read your `.env` file:
+
+```bash
+# Owner read/write only
+chmod 600 .env
+
+# Verify permissions
+ls -la .env
+# Should show: -rw------- (600)
+```
+
+### 4. Rotate Tokens Regularly
+
+Periodically regenerate your bot token:
+
+1. Open [@BotFather](https://t.me/BotFather)
+2. Send `/mybots`
+3. Select your bot
+4. Choose **API Token** → **Revoke current token**
+5. Update `.env` with the new token
+
+<Warning>
+Revoking your token immediately invalidates the old one. Update your `.env` file before restarting the bot.
+</Warning>
+
+## Token Validation
+
+### Testing Your Token
+
+Verify your token is valid before starting the bot:
+
+```bash
+curl https://api.telegram.org/bot<YOUR_TOKEN>/getMe
+```
+
+A valid token returns:
+
+```json
+{
+  "ok": true,
+  "result": {
+    "id": 123456789,
+    "is_bot": true,
+    "first_name": "Price Tracker Bot",
+    "username": "my_price_tracker_bot"
+  }
+}
+```
+
+An invalid token returns:
+
+```json
+{
+  "ok": false,
+  "error_code": 401,
+  "description": "Unauthorized"
+}
+```
+
+### Common Token Issues
+
+| Issue | Symptom | Solution |
+|-------|---------|----------|
+| Missing token | Bot exits: "TELEGRAM_TOKEN no definido" | Add token to `.env` file |
+| Invalid format | Bot fails to connect | Verify token format from BotFather |
+| Revoked token | API returns 401 Unauthorized | Generate new token via BotFather |
+| Extra whitespace | Connection errors | Remove spaces around token in `.env` |
+
+## Environment Variable Precedence
+
+When using multiple configuration sources, variables are loaded in this order (later sources override earlier ones):
+
+1. System environment variables
+2. `.env` file variables
+3. `.env.local` file variables (if using)
+
+<Tip>
+For local development, create a `.env.local` file that overrides `.env`. Add `.env.local` to `.gitignore` to keep personal settings private.
+</Tip>
+
+## Deployment Considerations
+
+### Docker
+
+When deploying with Docker, pass environment variables via docker-compose:
+
+```yaml docker-compose.yml
+version: '3.8'
+services:
+  price-tracker:
+    build: .
+    environment:
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+```
+
+Then create a `.env` file alongside `docker-compose.yml`:
+
+```bash .env
+TELEGRAM_TOKEN=your_token_here
+```
+
+### Cloud Platforms
+
+For cloud deployments, use the platform's secret management:
+
+**Heroku**:
+```bash
+heroku config:set TELEGRAM_TOKEN=your_token_here
+```
+
+**AWS**:
+```bash
+aws ssm put-parameter \
+  --name /price-tracker/telegram-token \
+  --value "your_token_here" \
+  --type SecureString
+```
+
+**Railway/Render**: Use the dashboard to add environment variables in the service settings.
+
+<Note>
+Cloud platforms typically inject environment variables directly into the runtime, so you don't need a `.env` file in production.
+</Note>
+
+## Troubleshooting
+
+### Bot Can't Find .env File
+
+**Symptom**: "TELEGRAM_TOKEN no definido" despite having `.env` file
+
+**Solutions**:
+1. Verify `.env` is in the same directory as `index.mjs`
+2. Check file is named exactly `.env` (not `env.txt` or `.env.txt`)
+3. Ensure no UTF-8 BOM or special characters in the file
+
+### Token Not Loading
+
+**Symptom**: Token is in `.env` but bot says it's undefined
+
+**Solutions**:
+1. Check for spaces: Use `TELEGRAM_TOKEN=value` not `TELEGRAM_TOKEN = value`
+2. Verify no quotes needed: `TELEGRAM_TOKEN=123:ABC` not `TELEGRAM_TOKEN="123:ABC"`
+3. Ensure `dotenv.config()` is called before accessing variables
+
+### Multiple Bots on Same Server
+
+**Symptom**: Need to run multiple bot instances
+
+**Solution**: Use separate directories with individual `.env` files:
+
+```bash
+project/
+├── bot1/
+│   ├── .env          # Token for bot 1
+│   ├── index.mjs
+│   └── prices.json
+└── bot2/
+    ├── .env          # Token for bot 2
+    ├── index.mjs
+    └── prices.json
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Setup Guide" icon="gear" href="./setup">
+    Complete initial setup and configuration
+  </Card>
+  <Card title="Scheduling" icon="clock" href="./scheduling">
+    Configure automated price checks and notifications
+  </Card>
+</CardGroup>

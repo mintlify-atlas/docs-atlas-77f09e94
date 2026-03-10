@@ -1,0 +1,756 @@
+---
+title: Web Scraping Implementation
+description: Technical deep dive into Playwright-based web scraping for Amazon product data
+---
+
+## Overview
+
+The Price Tracker Bot uses **Playwright with Chromium** to scrape Amazon product pages. The scraping logic handles multiple selector patterns, timeout management, and error recovery.
+
+<Info>
+Playwright is a browser automation library that provides reliable, cross-browser web scraping with modern JavaScript support.
+</Info>
+
+## Playwright Configuration
+
+### Browser Launch Options
+
+Chromium is launched in headless mode with security flags:
+
+```javascript
+const browser = await chromium.launch({ 
+  headless: true, 
+  args: ["--no-sandbox", "--disable-dev-shm-usage"] 
+});
+```
+
+**Launch arguments**:
+- `--no-sandbox`: Required for running as root in containers
+- `--disable-dev-shm-usage`: Uses `/tmp` instead of `/dev/shm` (prevents crashes in low-memory environments)
+
+**Location**: `index.mjs:148`, `index.mjs:412`, `index.mjs:561`
+
+<Note>
+Different parts of the codebase launch browsers with slightly different configurations. The `/add` and `/edit` commands omit `--disable-dev-shm-usage`.
+</Note>
+
+### Browser Context
+
+Each browser instance creates a context (isolated session):
+
+```javascript
+const context = await browser.newContext();
+const page = await context.newPage();
+```
+
+**Benefits**:
+- Isolated cookies and localStorage
+- Prevents cross-contamination between products
+- Allows parallel contexts (not currently used)
+
+## Core Scraping Function
+
+### `scrapeProduct(page, url)`
+
+The main scraping function accepts a Playwright page instance and product URL:
+
+```javascript
+async function scrapeProduct(page, url) {
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
+    await page.waitForTimeout(800);
+    
+    const title = await page.evaluate(() => { /* ... */ });
+    const priceText = await page.evaluate(() => { /* ... */ });
+    const imageUrl = await page.evaluate(() => { /* ... */ });
+    
+    if (!title) throw new Error("Título no encontrado");
+    const price = priceText ? parseFloat(priceText.replace(/[^0-9.]/g, "")) : null;
+    if (price === null || isNaN(price) || price <= 0) {
+      throw new Error("Precio inválido o no encontrado");
+    }
+    
+    return { url, title, price, imageUrl };
+  } catch (err) {
+    return { error: err.message || String(err) };
+  }
+}
+```
+
+**Location**: `index.mjs:73-136`
+
+**Return types**:
+- **Success**: `{ url, title, price, imageUrl }`
+- **Failure**: `{ error: string }`
+
+<Tip>
+The function never throws. Errors are caught and returned as objects, allowing the caller to decide how to handle failures.
+</Tip>
+
+## Page Navigation
+
+### Timeout Configuration
+
+Navigation uses a 60-second timeout:
+
+```javascript
+await page.goto(url, { 
+  waitUntil: "domcontentloaded", 
+  timeout: 60000 
+});
+```
+
+**Location**: `index.mjs:75`
+
+**`waitUntil` options**:
+- `domcontentloaded`: Wait until DOM is ready (faster)
+- `load`: Wait for all resources (slower, more reliable)
+- `networkidle`: Wait until network is quiet (slowest)
+
+<Info>
+The bot uses `domcontentloaded` for speed. This works for Amazon because product data is in the initial HTML, not loaded via JavaScript.
+</Info>
+
+### Post-Navigation Delay
+
+An 800ms delay allows lazy-loaded content to render:
+
+```javascript
+await page.waitForTimeout(800);
+```
+
+**Location**: `index.mjs:78`
+
+<Note>
+This is a "best effort" delay. Some lazy-loaded images may still not appear, which is why image selectors have fallbacks.
+</Note>
+
+## Selector Strategies
+
+### Title Extraction
+
+Multiple selectors are tried in sequence:
+
+```javascript
+const title = await page.evaluate(() => {
+  const selectors = [
+    "#productTitle",
+    "h1#title",
+    "h1.a-size-large",
+    'h1[data-automation-id="product-title"]',
+    ".product-title"
+  ];
+  
+  for (const s of selectors) {
+    const el = document.querySelector(s);
+    if (el?.textContent?.trim()) {
+      return el.textContent.trim();
+    }
+  }
+  
+  return null;
+});
+```
+
+**Location**: `index.mjs:80-93`
+
+#### Selector Priority
+
+| Selector | Amazon Page Type | Notes |
+|----------|------------------|-------|
+| `#productTitle` | Most product pages | Primary selector |
+| `h1#title` | Older layouts | Fallback |
+| `h1.a-size-large` | Some mobile views | Broader match |
+| `h1[data-automation-id="product-title"]` | Fresh/Whole Foods | Specialty stores |
+| `.product-title` | Generic fallback | Class-based match |
+
+<Tip>
+Selectors are ordered by specificity and frequency. The most common selector (`#productTitle`) is tried first for performance.
+</Tip>
+
+### Price Extraction
+
+Price selectors target hidden "screenreader" elements:
+
+```javascript
+const priceText = await page.evaluate(() => {
+  const selectors = [
+    "span.a-price .a-offscreen",
+    "span.a-offscreen",
+    "span#priceblock_ourprice",
+    "span#priceblock_dealprice",
+    "div#corePrice_feature_div span.a-offscreen",
+    'span[data-a-color="price"]'
+  ];
+  
+  for (const s of selectors) {
+    const el = document.querySelector(s);
+    if (el?.textContent?.trim()) {
+      return el.textContent.trim();
+    }
+  }
+  
+  return null;
+});
+```
+
+**Location**: `index.mjs:95-109`
+
+#### Why `.a-offscreen`?
+
+Amazon uses `.a-offscreen` elements for accessibility. These contain clean, unformatted price text:
+
+```html
+<span class="a-price">
+  <span class="a-offscreen">$278.00</span>
+  <span aria-hidden="true">
+    <span class="a-price-symbol">$</span>
+    <span class="a-price-whole">278</span>
+    <span class="a-price-decimal">.</span>
+    <span class="a-price-fraction">00</span>
+  </span>
+</span>
+```
+
+Scraping `.a-offscreen` avoids parsing split-up price components.
+
+<Info>
+Legacy selectors like `#priceblock_ourprice` are included for older Amazon layouts that may still exist in some regions.
+</Info>
+
+### Image Extraction
+
+Image selectors target high-resolution product images:
+
+```javascript
+const imageUrl = await page.evaluate(() => {
+  const selectors = [
+    "#landingImage",
+    "div#imgTagWrapperId img",
+    "img[data-old-hires]",
+    ".a-dynamic-image"
+  ];
+  
+  for (const s of selectors) {
+    const el = document.querySelector(s);
+    if (el?.src) {
+      return el.src;
+    }
+  }
+  
+  // Fallback: first image on page
+  const firstImg = document.querySelector("img");
+  return firstImg?.src || null;
+});
+```
+
+**Location**: `index.mjs:111-125`
+
+#### Selector Priority
+
+| Selector | Purpose | Notes |
+|----------|---------|-------|
+| `#landingImage` | Main product image | Most reliable |
+| `div#imgTagWrapperId img` | Image container | Backup for lazy-loaded images |
+| `img[data-old-hires]` | High-res image | Amazon's data attribute |
+| `.a-dynamic-image` | Dynamic images | Class-based fallback |
+| `img` (first) | Generic fallback | May return logo/icon |
+
+<Note>
+The final fallback (`document.querySelector("img")`) may return non-product images like the Amazon logo. This is acceptable since `imageUrl` is optional.
+</Note>
+
+## Data Parsing
+
+### Price Parsing
+
+Price text is cleaned and converted to a number:
+
+```javascript
+const price = priceText ? parseFloat(priceText.replace(/[^0-9.]/g, "")) : null;
+```
+
+**Location**: `index.mjs:128`
+
+**Examples**:
+```javascript
+"$278.00" → 278.00
+"US$1,299.99" → 1299.99
+"€45,50" → 45.50
+"¥3,980" → 3980
+```
+
+<Info>
+The regex `/[^0-9.]/g` removes all characters except digits and dots. This works for most currencies but may fail for comma-decimal formats (e.g., "45,50" → 4550).
+</Info>
+
+### Validation
+
+Extracted data is validated before returning:
+
+```javascript
+if (!title) throw new Error("Título no encontrado");
+
+if (price === null || isNaN(price) || price <= 0) {
+  throw new Error("Precio inválido o no encontrado");
+}
+```
+
+**Location**: `index.mjs:127-129`
+
+**Validation rules**:
+- Title must be non-empty string
+- Price must be a positive number
+- Image URL is optional (may be `null`)
+
+<Tip>
+If validation fails, the function returns `{ error: "..." }` instead of throwing, preventing the entire price check cycle from crashing.
+</Tip>
+
+## Error Handling
+
+### Error Return Pattern
+
+All errors are caught and returned as objects:
+
+```javascript
+try {
+  // Scraping logic
+  return { url, title, price, imageUrl };
+} catch (err) {
+  return { error: err.message || String(err) };
+}
+```
+
+**Location**: `index.mjs:132-135`
+
+### Caller Error Handling
+
+Callers check for the `error` property:
+
+```javascript
+const scraped = await scrapeProduct(page, sanitized);
+
+if (scraped.error) {
+  errors.push(`Error en ${stored.title || key}: ${scraped.error}`);
+  stored.lastChecked = new Date().toISOString();
+  priceData[key] = stored;
+  continue;
+}
+```
+
+**Location**: `index.mjs:165-172`
+
+<Note>
+Even on error, `lastChecked` is updated to track scraping attempts.
+</Note>
+
+## URL Sanitization
+
+### `sanitizeAmazonURL(url)`
+
+Removes tracking parameters and query strings:
+
+```javascript
+function sanitizeAmazonURL(url) {
+  try {
+    const u = new URL(url);
+    return u.origin + u.pathname;
+  } catch {
+    return url.split("?")[0];
+  }
+}
+```
+
+**Location**: `index.mjs:53-61`
+
+### Examples
+
+```javascript
+sanitizeAmazonURL("https://amazon.com/dp/B08N5WRWNW?tag=xyz&ref=abc")
+// → "https://amazon.com/dp/B08N5WRWNW"
+
+sanitizeAmazonURL("https://amazon.com/Sony-WH-1000XM4/dp/B08N5WRWNW#reviews")
+// → "https://amazon.com/Sony-WH-1000XM4/dp/B08N5WRWNW"
+
+sanitizeAmazonURL("https://amazon.com/gp/product/B08N5WRWNW?psc=1")
+// → "https://amazon.com/gp/product/B08N5WRWNW"
+```
+
+<Info>
+**Why sanitize?** Amazon URLs contain session-specific tracking parameters. Sanitizing prevents duplicate products and allows consistent key-based lookups.
+</Info>
+
+## Browser Lifecycle
+
+### Shared Browser (Price Checks)
+
+During scheduled price checks, a single browser is reused:
+
+```javascript
+const browser = await chromium.launch({ headless: true, args: [...] });
+const context = await browser.newContext();
+const page = await context.newPage();
+
+for (const key of keys) {
+  const scraped = await scrapeProduct(page, sanitized);
+  // ...
+  await new Promise((r) => setTimeout(r, 900)); // Rate limiting
+}
+
+await browser.close();
+```
+
+**Location**: `index.mjs:148-217`
+
+**Benefits**:
+- Faster (no repeated browser launches)
+- Lower memory usage
+- Consistent session state
+
+<Tip>
+The 900ms delay between products (`index.mjs:214`) helps avoid rate limiting and reduces server load.
+</Tip>
+
+### Temporary Browsers (User Commands)
+
+User-triggered commands launch temporary browsers:
+
+```javascript
+const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
+const context = await browser.newContext();
+const page = await context.newPage();
+
+const scraped = await scrapeProduct(page, sanitized);
+await browser.close();
+```
+
+**Location**: `index.mjs:412-417`, `index.mjs:561-566`
+
+**Used by**:
+- `/add [url]` command
+- `/edit [old] [new]` command
+
+<Note>
+Each user command gets its own browser instance to avoid blocking scheduled price checks.
+</Note>
+
+## Rate Limiting
+
+### Delays Between Products
+
+The price check loop includes delays to avoid overwhelming Amazon:
+
+```javascript
+for (const key of keys) {
+  const scraped = await scrapeProduct(page, sanitized);
+  // ... process scraped data ...
+  
+  await new Promise((r) => setTimeout(r, 900));
+}
+```
+
+**Location**: `index.mjs:214`
+
+**Delay durations**:
+- **Between products**: 900ms
+- **Between notifications**: 500ms (`index.mjs:242`)
+- **On errors**: 800ms (`index.mjs:170`)
+
+<Info>
+These delays are conservative. Amazon's actual rate limits are unknown but likely much higher.
+</Info>
+
+## Performance Considerations
+
+### Selector Efficiency
+
+Selectors are ordered by frequency to minimize iteration:
+
+```javascript
+const selectors = [
+  "#productTitle",        // Most common (fast ID selector)
+  "h1#title",             // Backup ID selector
+  "h1.a-size-large",      // Less common class selector
+  // ...
+];
+```
+
+ID selectors (`#productTitle`) are fastest, so they're tried first.
+
+### `page.evaluate()` Execution
+
+All selector logic runs in the browser context:
+
+```javascript
+const title = await page.evaluate(() => {
+  // This code runs in the browser, not Node.js
+  const selectors = [...];
+  for (const s of selectors) {
+    const el = document.querySelector(s);
+    if (el?.textContent?.trim()) return el.textContent.trim();
+  }
+  return null;
+});
+```
+
+**Benefits**:
+- Fewer round-trips between Node.js and browser
+- Faster DOM access
+- Simpler error handling
+
+<Tip>
+Using `page.evaluate()` to try all selectors in one call is much faster than calling `page.$()` multiple times from Node.js.
+</Tip>
+
+### Memory Management
+
+Browsers are explicitly closed after use:
+
+```javascript
+await browser.close();
+```
+
+**Locations**: `index.mjs:217`, `index.mjs:417`, `index.mjs:566`
+
+<Note>
+Failing to close browsers causes memory leaks. Chromium instances consume 100-300 MB of RAM each.
+</Note>
+
+## Common Scraping Issues
+
+### Issue: Timeout Errors
+
+**Symptom**: `Navigation timeout of 60000 ms exceeded`
+
+**Causes**:
+- Slow network connection
+- Amazon's bot detection blocking the request
+- Invalid URL (404 page)
+
+**Solutions**:
+- Increase timeout: `{ timeout: 120000 }`
+- Add retry logic
+- Implement rotating user agents
+
+### Issue: Selector Not Found
+
+**Symptom**: Returns `{ error: "Título no encontrado" }` or `{ error: "Precio inválido" }`
+
+**Causes**:
+- Amazon changed page layout
+- Product page is non-standard (e.g., Books, Digital)
+- Geo-restricted page
+
+**Solutions**:
+- Inspect page HTML manually
+- Add new selectors to the list
+- Use network tab to check for API endpoints
+
+### Issue: Price Parsing Fails
+
+**Symptom**: Returns `{ error: "Precio inválido o no encontrado" }`
+
+**Causes**:
+- Price uses comma decimal separator ("45,50")
+- Price text includes words ("From $10")
+- Out of stock (no price displayed)
+
+**Solutions**:
+- Improve regex: `/[^0-9.,]/g` and handle commas
+- Extract first number found
+- Return `null` price for out-of-stock items
+
+### Issue: Rate Limiting
+
+**Symptom**: Amazon returns CAPTCHA or blocks requests
+
+**Causes**:
+- Too many requests in short period
+- Missing or suspicious user agent
+- Always same IP address
+
+**Solutions**:
+- Increase delays between requests
+- Rotate user agents
+- Use residential proxies
+- Add cookies from manual session
+
+## Advanced Techniques
+
+### User Agent Rotation
+
+Set a realistic user agent to avoid detection:
+
+```javascript
+const context = await browser.newContext({
+  userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+});
+```
+
+### Cookie Persistence
+
+Save and restore cookies between sessions:
+
+```javascript
+// Save cookies after manual session
+const cookies = await context.cookies();
+fs.writeFileSync('cookies.json', JSON.stringify(cookies));
+
+// Restore cookies
+const savedCookies = JSON.parse(fs.readFileSync('cookies.json'));
+await context.addCookies(savedCookies);
+```
+
+### Proxy Support
+
+Rotate IP addresses using proxies:
+
+```javascript
+const browser = await chromium.launch({
+  headless: true,
+  proxy: {
+    server: 'http://proxy.example.com:8080',
+    username: 'user',
+    password: 'pass'
+  }
+});
+```
+
+### API Scraping (Alternative)
+
+Some Amazon pages expose JSON data in `<script>` tags:
+
+```javascript
+const data = await page.evaluate(() => {
+  const scripts = [...document.querySelectorAll('script[type="application/ld+json"]')];
+  for (const script of scripts) {
+    try {
+      const json = JSON.parse(script.textContent);
+      if (json['@type'] === 'Product') {
+        return {
+          title: json.name,
+          price: json.offers?.price,
+          image: json.image
+        };
+      }
+    } catch {}
+  }
+  return null;
+});
+```
+
+This is more reliable than selectors but not available on all pages.
+
+## Testing Scrapers
+
+### Manual Testing
+
+Test scraping logic in isolation:
+
+```javascript
+import { chromium } from "playwright";
+
+const browser = await chromium.launch({ headless: false });
+const page = await browser.newPage();
+
+const result = await scrapeProduct(page, "https://amazon.com/dp/B08N5WRWNW");
+console.log(result);
+
+await browser.close();
+```
+
+**Set `headless: false`** to watch the browser navigate.
+
+### Automated Tests
+
+Use mocked HTML pages:
+
+```javascript
+import { test, expect } from '@playwright/test';
+
+test('scrapes title correctly', async ({ page }) => {
+  await page.setContent(`
+    <html>
+      <body>
+        <span id="productTitle">Test Product</span>
+      </body>
+    </html>
+  `);
+  
+  const title = await page.evaluate(() => {
+    const el = document.querySelector('#productTitle');
+    return el?.textContent?.trim();
+  });
+  
+  expect(title).toBe('Test Product');
+});
+```
+
+## Selector Maintenance
+
+### Monitoring Failures
+
+Track scraping errors to detect selector breakage:
+
+```javascript
+if (errors.length) {
+  console.warn("⚠️ Errores durante la revisión:", errors);
+}
+```
+
+**Location**: `index.mjs:249`
+
+### Adding New Selectors
+
+When Amazon changes layouts, add new selectors:
+
+```javascript
+const selectors = [
+  "#productTitle",
+  "h1#title",
+  "h1.a-size-large",
+  'h1[data-automation-id="product-title"]',
+  ".product-title",
+  "NEW_SELECTOR_HERE"  // Add to end for backward compatibility
+];
+```
+
+<Tip>
+Add new selectors at the end to preserve performance for existing pages.
+</Tip>
+
+## Security Considerations
+
+### XSS Prevention
+
+All scraped text is escaped before displaying in Telegram:
+
+```javascript
+function escapeMD(text = "") {
+  return String(text).replace(/([_*[\]()~`>#+\-=|{}.!])/g, "\\$1");
+}
+```
+
+**Location**: `index.mjs:64-66`
+
+### URL Validation
+
+URLs are validated before scraping:
+
+```javascript
+if (!raw.startsWith("http")) {
+  return bot.sendMessage(chatId, "❌ URL inválida. Debe iniciar con http(s).");
+}
+```
+
+**Location**: `index.mjs:401`
+
+### Sandboxing
+
+Chromium runs with `--no-sandbox` flag. This is a security trade-off:
+
+<Note>
+**Risk**: Malicious pages could potentially escape the browser sandbox.
+**Mitigation**: Only scrape trusted domains (Amazon). For production, run in a containerized environment.
+</Note>

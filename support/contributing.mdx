@@ -1,0 +1,640 @@
+---
+title: Contributing
+description: How to contribute to the Price Tracker Bot project
+---
+
+## Welcome Contributors!
+
+Thank you for your interest in improving the Price Tracker Bot! This guide will help you get started with contributing.
+
+## Code Structure
+
+Understanding the codebase architecture will help you make effective contributions.
+
+### File Organization
+
+The bot is a single-file application:
+
+```
+.
+├── index.mjs          # Main bot code (~753 lines)
+├── prices.json        # Data persistence (auto-generated)
+├── .env              # Environment variables (token)
+├── package.json      # Dependencies
+└── README.md         # Project documentation
+```
+
+### Code Sections
+
+The code is organized into logical sections:
+
+<AccordionGroup>
+  <Accordion title="Config (Lines 10-17)">
+    **Purpose:** Environment setup and bot initialization
+
+    ```javascript
+    const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+    const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
+    ```
+
+    **Key constants:**
+    - `TELEGRAM_TOKEN` - Bot authentication
+    - `bot` - Main Telegram bot instance
+  </Accordion>
+
+  <Accordion title="Persistence (Lines 19-50)">
+    **Purpose:** Data storage and retrieval
+
+    **Key components:**
+    - `DATA_FILE = "prices.json"` - Storage file
+    - `priceData` - Object storing products by URL
+    - `chats` - Set of registered chat IDs
+    - `loadData()` - Reads from disk on startup
+    - `saveData()` - Writes to disk after changes
+
+    **Data structure:**
+    ```javascript
+    {
+      "products": {
+        "[sanitized_url]": {
+          url, title, price, lowestPrice,
+          imageUrl, addedDate, addedBy,
+          lastChecked, history: []
+        }
+      },
+      "chats": [chatId1, chatId2, ...]
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Utils (Lines 52-69)">
+    **Purpose:** Helper functions
+
+    **Functions:**
+    - `sanitizeAmazonURL()` - Removes query params from URLs
+    - `escapeMD()` - Escapes Markdown special characters
+    - `HISTORY_LIMIT = 120` - Max history entries per product
+  </Accordion>
+
+  <Accordion title="Scraper (Lines 71-136)">
+    **Purpose:** Web scraping logic
+
+    **Main function:** `scrapeProduct(page, url)`
+
+    **Process:**
+    1. Navigate to product page (60s timeout)
+    2. Wait 800ms for lazy-loaded content
+    3. Try multiple CSS selectors for:
+       - Title (6 selectors)
+       - Price (6 selectors)
+       - Image (4 selectors)
+    4. Parse price string to number
+    5. Return product data or error object
+
+    **Selector arrays** (lines 81-125):
+    ```javascript
+    // Title
+    ["#productTitle", "h1#title", "h1.a-size-large", ...]
+
+    // Price  
+    ["span.a-price .a-offscreen", "span#priceblock_ourprice", ...]
+
+    // Image
+    ["#landingImage", "div#imgTagWrapperId img", ...]
+    ```
+  </Accordion>
+
+  <Accordion title="Price Check Logic (Lines 138-250)">
+    **Purpose:** Automated price monitoring
+
+    **Main function:** `checkPrices()`
+
+    **Process:**
+    1. Launch browser (shared page for efficiency)
+    2. Iterate through all products
+    3. Scrape current price
+    4. Compare with stored price
+    5. Detect drops: `if (scraped.price < originalPrice)`
+    6. Update product data
+    7. Record history (limit to 120 entries)
+    8. Close browser
+    9. Save data
+    10. Send notifications to all chats
+
+    **Error handling:**
+    - Logs errors but continues checking other products
+    - Updates `lastChecked` even on failure
+    - Collects errors for summary report
+  </Accordion>
+
+  <Accordion title="Chart Generation (Lines 252-333)">
+    **Purpose:** Visual price history
+
+    **Functions:**
+    - `generateChartBuffer()` - Creates chart image using Playwright + Chart.js
+    - `sendPriceChart()` - Sends chart to user
+
+    **Process:**
+    1. Generate HTML with Chart.js
+    2. Load in headless browser
+    3. Wait for render (1s)
+    4. Screenshot canvas element
+    5. Return as buffer
+    6. Send to Telegram as photo
+  </Accordion>
+
+  <Accordion title="Commands (Lines 335-623)">
+    **Purpose:** User interaction handlers
+
+    **Command handlers:**
+    - `/start` (line 359) - Welcome message
+    - `/help` (line 384) - Command reference
+    - `/add` (line 398) - Add product to tracking
+    - `/check` (line 470) - Force price check
+    - `/list` (line 489) - Show all products
+    - `/stats` (line 492) - Show statistics
+    - `/remove` (line 520) - Delete product
+    - `/edit` (line 545) - Update product URL
+    - `/chart` (line 613) - Generate price graph
+
+    **Pattern:** All use `bot.onText()` with regex
+  </Accordion>
+
+  <Accordion title="Callback Queries (Lines 625-702)">
+    **Purpose:** Handle inline button clicks
+
+    **Handled callbacks:**
+    - `select_product:[url]` - Show product details
+    - `delete_product:[url]` - Remove product
+    - `edit_product:[url]` - Start edit workflow
+    - `delete_all` - Clear all products
+    - `list` - Show product list
+    - `check_prices` - Trigger check
+    - `chart:[url]` - Generate chart
+
+    **Pattern:** `bot.on("callback_query", ...)`
+  </Accordion>
+
+  <Accordion title="Cron Jobs (Lines 718-740)">
+    **Purpose:** Scheduled automation
+
+    **Jobs:**
+    - Daily summary at 20:00 (line 720)
+    - Price checks every 2 hours (line 733)
+
+    **Uses:** `node-cron` library
+  </Accordion>
+</AccordionGroup>
+
+## Development Setup
+
+### Prerequisites
+
+- Node.js 16+
+- npm or yarn
+- Git
+- A Telegram account
+
+### Local Development
+
+1. **Fork and clone:**
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/price-tracker-bot.git
+   cd price-tracker-bot
+   ```
+
+2. **Install dependencies:**
+   ```bash
+   npm install
+   ```
+
+3. **Install Playwright browsers:**
+   ```bash
+   npx playwright install chromium
+   ```
+
+4. **Create test bot:**
+   - Message [@BotFather](https://t.me/botfather) on Telegram
+   - Create a new bot for testing
+   - Copy the token
+
+5. **Configure environment:**
+   ```bash
+   echo "TELEGRAM_TOKEN=your_test_bot_token" > .env
+   ```
+
+6. **Start development:**
+   ```bash
+   node index.mjs
+   ```
+
+<Tip>
+  Use a separate test bot during development to avoid disrupting production users.
+</Tip>
+
+### Testing Your Changes
+
+**Manual testing checklist:**
+
+- [ ] Send `/start` - Verify welcome message
+- [ ] Add a product - Check scraping works
+- [ ] Run `/list` - Verify product appears
+- [ ] Run `/check` - Force a price update
+- [ ] Wait or modify prices.json - Test notifications
+- [ ] Try `/chart` - Verify chart generation
+- [ ] Test `/edit` - Update a product URL
+- [ ] Run `/remove` - Delete a product
+- [ ] Check console logs for errors
+
+**Testing scraper changes:**
+
+```javascript
+// Add temporary test code
+const browser = await chromium.launch({ headless: false }); // See browser
+const page = await browser.newPage();
+const result = await scrapeProduct(page, "YOUR_TEST_URL");
+console.log(result);
+await browser.close();
+```
+
+## How to Add Features
+
+### Adding New Commands
+
+**Example: Add a `/pause` command to temporarily stop notifications**
+
+1. **Add data structure** (after line 22):
+   ```javascript
+   let pausedChats = new Set();
+   ```
+
+2. **Update persistence** (in `loadData()` and `saveData()`):
+   ```javascript
+   // In loadData()
+   pausedChats = new Set(saved.pausedChats || []);
+
+   // In saveData()
+   fs.writeFileSync(DATA_FILE, JSON.stringify({ 
+     products: priceData, 
+     chats: [...chats],
+     pausedChats: [...pausedChats]
+   }, null, 2));
+   ```
+
+3. **Add command handler** (after line 623):
+   ```javascript
+   bot.onText(/\/pause/, (msg) => {
+     const chatId = msg.chat.id;
+     if (pausedChats.has(chatId)) {
+       pausedChats.delete(chatId);
+       bot.sendMessage(chatId, "✅ Notificaciones reactivadas.");
+     } else {
+       pausedChats.add(chatId);
+       bot.sendMessage(chatId, "⏸️ Notificaciones pausadas. Usa /pause para reactivar.");
+     }
+     saveData();
+   });
+   ```
+
+4. **Update notification logic** (in `checkPrices()`, line 223):
+   ```javascript
+   for (const chatId of chats) {
+     if (pausedChats.has(chatId)) continue; // Skip paused chats
+     // ... rest of notification code
+   }
+   ```
+
+5. **Update help text** (line 378):
+   ```javascript
+   ⏸️ /pause - Pausar/reactivar notificaciones
+   ```
+
+### Adding New Scraper Selectors
+
+**If Amazon changes their HTML or you want to support more page types:**
+
+1. **Inspect the product page** (browser DevTools)
+2. **Find the CSS selector** for the element
+3. **Add to selector array** (lines 81-125)
+
+**Example: Adding a new price selector**
+
+```javascript
+// Line 96 - price selectors
+const priceText = await page.evaluate(() => {
+  const selectors = [
+    "span.a-price .a-offscreen",
+    "span.a-offscreen",
+    "span#priceblock_ourprice",
+    "span#priceblock_dealprice",
+    "div#corePrice_feature_div span.a-offscreen",
+    'span[data-a-color="price"]',
+    "span.a-color-price" // NEW SELECTOR
+  ];
+  // ... rest stays the same
+});
+```
+
+<Note>
+  Selectors are tried in order. Place most reliable/common selectors first for better performance.
+</Note>
+
+### Adding Export Functionality
+
+**Example: Export price data to CSV**
+
+1. **Add command** (after line 623):
+   ```javascript
+   bot.onText(/\/export/, async (msg) => {
+     const chatId = msg.chat.id;
+     
+     let csv = "URL,Title,Current Price,Lowest Price,Added Date\n";
+     
+     Object.entries(priceData).forEach(([url, product]) => {
+       csv += `"${url}","${product.title}",${product.price},${product.lowestPrice},"${product.addedDate}"\n`;
+     });
+     
+     const buffer = Buffer.from(csv, 'utf-8');
+     
+     await bot.sendDocument(chatId, buffer, {
+       filename: `price-tracker-export-${Date.now()}.csv`
+     });
+   });
+   ```
+
+2. **Update help text** (line 378):
+   ```javascript
+   📥 /export - Exportar datos a CSV
+   ```
+
+### Adding Multi-User Support
+
+**To isolate products per user:**
+
+1. **Change data structure** (line 21):
+   ```javascript
+   // OLD:
+   let priceData = {}; // keys: url -> product
+   
+   // NEW:
+   let priceData = {}; // keys: chatId -> { url -> product }
+   ```
+
+2. **Update all product access** throughout:
+   ```javascript
+   // OLD:
+   priceData[url]
+   
+   // NEW:
+   if (!priceData[chatId]) priceData[chatId] = {};
+   priceData[chatId][url]
+   ```
+
+3. **Update price check** (line 139):
+   ```javascript
+   async function checkPrices() {
+     for (const [chatId, products] of Object.entries(priceData)) {
+       // Check products for this chat
+       // Notify only this chatId
+     }
+   }
+   ```
+
+<Warning>
+  This is a significant refactor. Test thoroughly and consider creating a migration script for existing data.
+</Warning>
+
+## GitHub Workflow
+
+### Branching Strategy
+
+```bash
+# Create a feature branch
+git checkout -b feature/your-feature-name
+
+# Or a bugfix branch
+git checkout -b fix/bug-description
+```
+
+### Making Changes
+
+1. **Write code** following existing style
+2. **Test thoroughly** (see testing checklist above)
+3. **Commit with clear messages:**
+   ```bash
+   git add .
+   git commit -m "Add pause command for notifications"
+   ```
+
+### Submitting Pull Requests
+
+1. **Push your branch:**
+   ```bash
+   git push origin feature/your-feature-name
+   ```
+
+2. **Create PR on GitHub** with:
+   - Clear title describing the change
+   - Description of what changed and why
+   - Screenshots/examples if UI changes
+   - Testing steps you performed
+
+3. **PR template:**
+   ```markdown
+   ## Description
+   [What does this PR do?]
+
+   ## Changes
+   - Added X feature
+   - Fixed Y bug
+   - Updated Z documentation
+
+   ## Testing
+   - [ ] Tested /command manually
+   - [ ] Verified data persistence
+   - [ ] Checked error handling
+   - [ ] Reviewed console logs
+
+   ## Screenshots
+   [If applicable]
+   ```
+
+<Tip>
+  Link related issues in your PR description using `Fixes #123` or `Closes #456`.
+</Tip>
+
+## Code Style Guidelines
+
+### JavaScript Conventions
+
+**Current style** (maintain consistency):
+
+```javascript
+// Function declarations
+function functionName() { ... }
+async function asyncFunction() { ... }
+
+// Arrow functions for callbacks
+bot.onText(/pattern/, (msg) => { ... });
+
+// Template literals for messages
+const message = `Hello ${escapeMD(name)}`;
+
+// Destructuring
+const { price, title } = product;
+
+// Error handling
+try {
+  // code
+} catch (err) {
+  console.error("❌ Error:", err.message);
+}
+```
+
+### Console Messages
+
+**Use emojis for visual clarity:**
+
+- ✅ - Success
+- ❌ - Error
+- ⚠️ - Warning
+- ℹ️ - Info
+- 🎉 - Celebration
+- ⏳ - Loading/waiting
+- 🔄 - Processing
+
+**Examples:**
+```javascript
+console.log("✅ Datos cargados.");
+console.error("❌ Error al cargar datos:", err.message);
+console.warn("⚠️ Errores durante la revisión:", errors);
+console.log("ℹ️ No hay productos para revisar.");
+```
+
+### Telegram Messages
+
+**Use Markdown formatting:**
+
+```javascript
+// Bold for emphasis
+*text*
+
+// Code blocks
+`/command`
+
+// Links
+[Text](https://url.com)
+
+// MUST escape special characters
+escape MD(userInput)
+```
+
+## Common Pitfalls
+
+<AccordionGroup>
+  <Accordion title="Forgetting to Save Data">
+    **Problem:** Changes to `priceData` or `chats` not persisted
+
+    **Solution:** Call `saveData()` after modifications
+
+    ```javascript
+    priceData[url] = newProduct;
+    saveData(); // DON'T FORGET THIS!
+    ```
+  </Accordion>
+
+  <Accordion title="Not Closing Browsers">
+    **Problem:** Memory leaks from unclosed browser instances
+
+    **Solution:** Always close in `finally` or after use
+
+    ```javascript
+    const browser = await chromium.launch();
+    try {
+      // use browser
+    } finally {
+      await browser.close(); // ALWAYS CLOSE
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Markdown Escaping">
+    **Problem:** User input breaks Markdown formatting
+
+    **Solution:** Use `escapeMD()` for all user data
+
+    ```javascript
+    // WRONG:
+    bot.sendMessage(chatId, `Title: ${product.title}`);
+
+    // RIGHT:
+    bot.sendMessage(chatId, `Title: ${escapeMD(product.title)}`);
+    ```
+  </Accordion>
+
+  <Accordion title="Async/Await Issues">
+    **Problem:** Forgetting `await` on async operations
+
+    **Solution:** Mark functions as `async` and use `await`
+
+    ```javascript
+    // WRONG:
+    function handler(msg) {
+      bot.sendMessage(chatId, "text"); // No await
+      checkPrices(); // No await
+    }
+
+    // RIGHT:
+    async function handler(msg) {
+      await bot.sendMessage(chatId, "text");
+      await checkPrices();
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Error Handling">
+    **Problem:** Unhandled promise rejections crash bot
+
+    **Solution:** Wrap risky operations in try/catch
+
+    ```javascript
+    try {
+      await riskyOperation();
+    } catch (err) {
+      console.error("❌ Error:", err.message);
+      // Inform user or continue gracefully
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Documentation
+
+**When adding features, update:**
+
+1. **Code comments** - Explain complex logic
+2. **README.md** - Add new commands to list
+3. **Help command** (line 384) - Include new commands
+4. **This guide** - Document architecture changes
+
+## Getting Help
+
+**If you need assistance:**
+
+1. **Check existing issues** on GitHub
+2. **Read the code** - It's well-structured and commented
+3. **Open a discussion** - Ask questions before major changes
+4. **Join the community** - Connect with other contributors
+
+<Note>
+  No contribution is too small! Bug reports, documentation improvements, and feature suggestions are all valuable.
+</Note>
+
+## Recognition
+
+All contributors will be acknowledged in:
+- Project README
+- Release notes
+- GitHub contributors page
+
+Thank you for helping improve Price Tracker Bot! 🎉

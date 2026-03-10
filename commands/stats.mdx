@@ -1,0 +1,323 @@
+---
+title: /stats Command
+description: View comprehensive statistics about your tracked products and potential savings
+---
+
+## Overview
+
+The `/stats` command provides a summary of your price tracking activity, including total products monitored, registered chats, and potential savings detected across all tracked items.
+
+## Syntax
+
+```bash
+/stats
+```
+
+<Note>
+This command takes no parameters and displays global statistics across all tracked products.
+</Note>
+
+## Example Output
+
+### With Tracked Products
+
+```bash
+/stats
+```
+
+**Bot Response:**
+```
+📊 Estadísticas de seguimiento
+
+📦 Productos: 12
+👥 Chats registrados: 3
+💰 Ahorro potencial detectado: $145.67
+📉 Productos con precio reducido: 5
+```
+
+### No Products Tracked
+
+```bash
+/stats
+```
+
+**Bot Response:**
+```
+📊 No tienes productos en seguimiento aún.
+Usa /add [url] para empezar.
+```
+
+## Statistics Explained
+
+### Products
+
+<ParamField path="Productos" type="number">
+  Total number of products currently being tracked
+</ParamField>
+
+This includes all products added across all users (if multiple chats are using the bot).
+
+### Chats Registered
+
+<ParamField path="Chats registrados" type="number">
+  Number of unique Telegram chats that have interacted with the bot
+</ParamField>
+
+Each chat is automatically registered when:
+- Sending `/start` command
+- Sending any message to the bot
+
+### Potential Savings
+
+<ParamField path="Ahorro potencial detectado" type="number">
+  Total savings across all products where current price is lower than the lowest recorded price
+</ParamField>
+
+**Calculation:**
+```javascript
+totalSavings = sum(lowestPrice - currentPrice) for all products where currentPrice < lowestPrice
+```
+
+<Note>
+This metric shows potential savings if you were to purchase all products with current price drops.
+</Note>
+
+### Products with Price Reductions
+
+<ParamField path="Productos con precio reducido" type="number">
+  Count of products where the current price is lower than the historically lowest price
+</ParamField>
+
+This indicates how many products currently have favorable pricing.
+
+## Code Implementation
+
+The `/stats` command is implemented in `index.mjs:492-517`:
+
+```javascript index.mjs
+bot.onText(/\/stats/, (msg) => {
+  const chatId = msg.chat.id;
+  const totalProducts = Object.keys(priceData).length;
+  const totalChats = chats.size;
+
+  if (totalProducts === 0) {
+    return bot.sendMessage(chatId, "📊 No tienes productos en seguimiento aún.\nUsa /add [url] para empezar.");
+  }
+
+  let totalSavings = 0;
+  let productsWithSavings = 0;
+
+  Object.values(priceData).forEach((product) => {
+    if (typeof product.lowestPrice === "number" && typeof product.price === "number") {
+      if (product.price < product.lowestPrice) {
+        totalSavings += (product.lowestPrice - product.price);
+        productsWithSavings++;
+      }
+    }
+  });
+
+  const statsMsg = `📊 *Estadísticas de seguimiento*\n\n📦 Productos: ${totalProducts}\n👥 Chats registrados: ${totalChats}\n💰 Ahorro potencial detectado: $${totalSavings.toFixed(2)}\n📉 Productos con precio reducido: ${productsWithSavings}`;
+
+  bot.sendMessage(chatId, statsMsg, { parse_mode: "Markdown" });
+});
+```
+
+## Calculation Logic
+
+### Total Savings Calculation
+
+```javascript
+let totalSavings = 0;
+let productsWithSavings = 0;
+
+Object.values(priceData).forEach((product) => {
+  if (typeof product.lowestPrice === "number" && typeof product.price === "number") {
+    if (product.price < product.lowestPrice) {
+      totalSavings += (product.lowestPrice - product.price);
+      productsWithSavings++;
+    }
+  }
+});
+```
+
+The calculation:
+1. Iterates through all tracked products
+2. Checks if both `lowestPrice` and `price` are valid numbers
+3. If current price is **lower** than the lowest recorded price, adds the difference to `totalSavings`
+4. Increments the counter of products with savings
+
+<Warning>
+The logic calculates savings where `currentPrice < lowestPrice`. This seems counterintuitive but represents the scenario where you're getting an even better deal than the historical low.
+</Warning>
+
+## Understanding the Metrics
+
+### Scenario 1: Price Drop Detected
+
+| Metric | Value | Explanation |
+|--------|-------|-------------|
+| Lowest Price | $250.00 | Historical minimum |
+| Current Price | $229.99 | Latest scraped price |
+| Savings | $20.01 | You're saving $20 vs. historical low |
+| Status | ✅ Contributing to stats | Counted in "Ahorro potencial" |
+
+### Scenario 2: No Change
+
+| Metric | Value | Explanation |
+|--------|-------|-------------|
+| Lowest Price | $250.00 | Historical minimum |
+| Current Price | $250.00 | Same as lowest |
+| Savings | $0.00 | No savings |
+| Status | ❌ Not contributing | Not counted in stats |
+
+### Scenario 3: Price Increased
+
+| Metric | Value | Explanation |
+|--------|-------|-------------|
+| Lowest Price | $250.00 | Historical minimum |
+| Current Price | $279.99 | Price went up |
+| Savings | $0.00 | No savings (price is higher) |
+| Status | ❌ Not contributing | Not counted in stats |
+
+## Real-World Example
+
+### Sample Data
+
+```json
+{
+  "products": {
+    "https://amazon.com/product1": {
+      "title": "Product A",
+      "price": 199.99,
+      "lowestPrice": 220.00
+    },
+    "https://amazon.com/product2": {
+      "title": "Product B",
+      "price": 149.99,
+      "lowestPrice": 149.99
+    },
+    "https://amazon.com/product3": {
+      "title": "Product C",
+      "price": 89.99,
+      "lowestPrice": 79.99
+    }
+  },
+  "chats": [123456789, 987654321]
+}
+```
+
+### Calculated Statistics
+
+```
+📊 Estadísticas de seguimiento
+
+📦 Productos: 3
+👥 Chats registrados: 2
+💰 Ahorro potencial detectado: $20.01
+📉 Productos con precio reducido: 1
+```
+
+**Breakdown:**
+- Product A: Current ($199.99) < Lowest ($220.00) = **$20.01 savings** ✅
+- Product B: Current ($149.99) = Lowest ($149.99) = **$0 savings** ❌
+- Product C: Current ($89.99) > Lowest ($79.99) = **$0 savings** ❌
+
+## Use Cases
+
+### Daily Overview
+
+Check your tracking performance:
+```bash
+/stats
+```
+
+Get a quick summary without viewing individual products.
+
+### Monitoring Effectiveness
+
+Assess how well the bot is finding deals:
+```bash
+/stats
+```
+
+Higher savings indicate the bot is successfully catching price drops.
+
+### Multi-User Tracking
+
+If multiple people use the same bot instance:
+```bash
+/stats
+```
+
+See how many chats are registered and total products tracked.
+
+### Before Bulk Actions
+
+Before removing all products:
+```bash
+/stats
+/list
+# Click "Eliminar todos"
+```
+
+## Limitations
+
+<Warning>
+**Important limitations to understand:**
+- Savings only count products where current price < lowest recorded price
+- Does not account for products you've already purchased
+- Global statistics include all users' products (if bot is shared)
+- No per-user breakdown (all chats see the same global stats)
+</Warning>
+
+## Comparison with /list
+
+| Feature | /stats | /list |
+|---------|--------|-------|
+| Shows product count | ✅ Yes | ✅ Yes |
+| Shows individual products | ❌ No | ✅ Yes |
+| Shows total savings | ✅ Yes | ❌ No |
+| Shows chat count | ✅ Yes | ❌ No |
+| Interactive buttons | ❌ No | ✅ Yes |
+| Quick overview | ✅ Yes | ❌ No |
+
+<Tip>
+Use `/stats` for a quick overview and `/list` for detailed product management.
+</Tip>
+
+## Chat Registration
+
+Chats are automatically registered when:
+
+```javascript index.mjs
+bot.on("message", (msg) => {
+  const chatId = msg.chat.id;
+  if (!chats.has(chatId)) {
+    chats.add(chatId);
+    saveData();
+    console.log(`🎉 Nuevo chat registrado (por mensaje): ${chatId}`);
+  }
+});
+```
+
+Every message to the bot ensures the chat is registered for:
+- Price drop notifications
+- Daily summaries
+- Statistics tracking
+
+## Best Practices
+
+<Tip>
+**Tips for using /stats:**
+- Run `/stats` daily to monitor your tracking effectiveness
+- Compare "Productos" with "Productos con precio reducido" to see your deal rate
+- Use alongside `/check` to refresh data before viewing stats
+- If savings seem high, run `/list` to see which specific products have deals
+</Tip>
+
+## Related Commands
+
+- [/list](/commands/list) - View individual product details
+- [/check](/commands/check) - Update prices before viewing stats
+- [/add](/commands/add) - Add more products to track
+- [/chart](/commands/chart) - Visualize individual product price trends

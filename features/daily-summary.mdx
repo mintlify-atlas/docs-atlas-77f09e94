@@ -1,0 +1,361 @@
+---
+title: 'Daily Summary'
+description: 'Automated daily reports sent at 8 PM'
+---
+
+## Overview
+
+The Daily Summary feature provides users with an **interactive menu** of all tracked products, sent automatically every day at **8:00 PM** (server timezone). It serves as a centralized hub for managing tracked items.
+
+## Schedule
+
+The daily summary runs on a **cron schedule**:
+
+```javascript
+// Daily summary at 20:00 (server timezone)
+cron.schedule("0 20 * * *", async () => {
+  console.log("📄 Envío de resumen diario...");
+  for (const chatId of chats) {
+    try {
+      await dailySummary(chatId);
+      await new Promise(r => setTimeout(r, 400));
+    } catch (err) {
+      console.error(`❌ Error enviando resumen a ${chatId}:`, err.message);
+    }
+  }
+});
+```
+
+<CardGroup cols={2}>
+  <Card title="Schedule" icon="clock">
+    Every day at 20:00 (8:00 PM)
+  </Card>
+  <Card title="Cron Expression" icon="calendar">
+    `0 20 * * *` - Daily at hour 20, minute 0
+  </Card>
+  <Card title="Recipients" icon="users">
+    All registered chats receive the summary
+  </Card>
+  <Card title="Delay" icon="hourglass">
+    400ms pause between each chat to avoid rate limiting
+  </Card>
+</CardGroup>
+
+## Daily Summary Function
+
+The `dailySummary()` function (lines 336-356) generates an interactive message:
+
+```javascript
+async function dailySummary(chatId) {
+  const urls = Object.keys(priceData);
+  if (!urls.length) {
+    return bot.sendMessage(chatId, "📭 No tienes productos en seguimiento.\n\nUsa /add [url] para agregar uno.");
+  }
+
+  const inlineKeyboard = urls.map((u) => {
+    const p = priceData[u];
+    const title = p?.title || u;
+    const truncated = title.length > 30 ? `${title.slice(0, 30)}...` : title;
+    return [{ text: `📦 ${truncated}`, callback_data: `select_product:${u}` }];
+  });
+
+  inlineKeyboard.push([{ text: "🗑️ Eliminar todos", callback_data: "delete_all" }]);
+  inlineKeyboard.push([{ text: "🔄 Revisar precios ahora", callback_data: "check_prices" }]);
+
+  await bot.sendMessage(chatId, `📊 *Productos en seguimiento: ${urls.length}*\n\nSelecciona un producto para ver detalles:`, {
+    parse_mode: "Markdown",
+    reply_markup: { inline_keyboard: inlineKeyboard }
+  });
+}
+```
+
+## Message Format
+
+### When Products Are Tracked
+
+```
+📊 Productos en seguimiento: 5
+
+Selecciona un producto para ver detalles:
+
+[📦 Apple AirPods Pro (2nd Gen...]
+[📦 Samsung Galaxy S24 Ultra...]
+[📦 Sony WH-1000XM5 Wireless...]
+[📦 Logitech MX Master 3S Mouse]
+[📦 iPhone 15 Pro Max 256GB...]
+
+[🗑️ Eliminar todos]
+[🔄 Revisar precios ahora]
+```
+
+### When No Products Are Tracked
+
+```
+📭 No tienes productos en seguimiento.
+
+Usa /add [url] para agregar uno.
+```
+
+<Note>
+If no products are being tracked, the daily summary prompts users to add their first product.
+</Note>
+
+## Interactive Menu
+
+The daily summary includes **inline keyboard buttons** for each product and system actions:
+
+### Product Buttons
+
+Each tracked product gets a button with truncated title:
+
+```javascript
+const title = p?.title || u;
+const truncated = title.length > 30 ? `${title.slice(0, 30)}...` : title;
+return [{ text: `📦 ${truncated}`, callback_data: `select_product:${u}` }];
+```
+
+<Info>
+Product titles longer than 30 characters are truncated with "..." to keep buttons readable.
+</Info>
+
+### System Action Buttons
+
+Two additional buttons provide quick access to bulk actions:
+
+```javascript
+inlineKeyboard.push([{ text: "🗑️ Eliminar todos", callback_data: "delete_all" }]);
+inlineKeyboard.push([{ text: "🔄 Revisar precios ahora", callback_data: "check_prices" }]);
+```
+
+<CardGroup cols={2}>
+  <Card title="🗑️ Eliminar todos" icon="trash">
+    Deletes all tracked products at once
+  </Card>
+  <Card title="🔄 Revisar precios ahora" icon="rotate">
+    Triggers immediate price check for all products
+  </Card>
+</CardGroup>
+
+## Product Detail View
+
+When a user clicks on a product button, they see detailed information:
+
+```javascript
+if (data.startsWith("select_product:")) {
+  const productUrl = data.substring("select_product:".length);
+  const product = priceData[productUrl];
+  if (!product) return bot.sendMessage(chatId, "❌ Producto no encontrado.");
+
+  const addedDate = product.addedDate ? new Date(product.addedDate).toLocaleDateString() : "N/A";
+  const lastChecked = product.lastChecked ? new Date(product.lastChecked).toLocaleDateString() : "Nunca";
+  const priceDifference = (product.lowestPrice || product.price) - product.price;
+  const savingsText = priceDifference > 0 ? `\n💰 Ahorro desde el mínimo: $${priceDifference.toFixed(2)}` : "";
+
+  const messageText =
+`*${escapeMD(product.title)}*
+
+💰 Precio actual: $${product.price}
+📉 Precio más bajo visto: $${product.lowestPrice}
+📅 Agregado: ${addedDate}
+🔄 Última revisión: ${lastChecked}${savingsText}`;
+
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: "🛒 Ver en Amazon", url: product.url }],
+      [
+        { text: "✍🏻 Editar URL", callback_data: `edit_product:${productUrl}` },
+        { text: "🗑️ Eliminar", callback_data: `delete_product:${productUrl}` }
+      ],
+      [{ text: "⏪ Volver a la lista", callback_data: "list" }],
+      [{ text: "📈 Ver gráfico", callback_data: `chart:${productUrl}` }]
+    ]
+  };
+
+  if (product.imageUrl) {
+    await bot.sendPhoto(chatId, product.imageUrl, { 
+      caption: messageText, 
+      parse_mode: "Markdown", 
+      reply_markup: keyboard 
+    });
+  } else {
+    await bot.sendMessage(chatId, messageText, { 
+      parse_mode: "Markdown", 
+      reply_markup: keyboard 
+    });
+  }
+}
+```
+
+### Example Product Detail
+
+```
+[Product Image]
+
+Apple AirPods Pro (2nd Generation)
+
+💰 Precio actual: $199.99
+📉 Precio más bajo visto: $189.99
+📅 Agregado: 3/1/2026
+🔄 Última revisión: 3/10/2026
+💰 Ahorro desde el mínimo: $10.00
+
+[🛒 Ver en Amazon]
+[✍🏻 Editar URL] [🗑️ Eliminar]
+[⏪ Volver a la lista]
+[📈 Ver gráfico]
+```
+
+## Manual Access
+
+Users can manually trigger the daily summary using `/list`:
+
+```javascript
+// /list
+bot.onText(/\/list/, async (msg) => dailySummary(msg.chat.id));
+```
+
+<Tip>
+Use `/list` anytime to access the interactive product menu without waiting for 8 PM.
+</Tip>
+
+## Callback Actions
+
+The daily summary's inline buttons trigger various callback actions:
+
+<Accordion title="select_product: View product details">
+```javascript
+if (data.startsWith("select_product:")) {
+  const productUrl = data.substring("select_product:".length);
+  const product = priceData[productUrl];
+  // ... display product details with image and actions ...
+}
+```
+</Accordion>
+
+<Accordion title="delete_all: Remove all products">
+```javascript
+} else if (data === "delete_all") {
+  const totalProducts = Object.keys(priceData).length;
+  priceData = {};
+  saveData();
+  await bot.sendMessage(chatId, `🗑️ Se eliminaron ${totalProducts} productos.`);
+}
+```
+</Accordion>
+
+<Accordion title="check_prices: Trigger price check">
+```javascript
+} else if (data === "check_prices") {
+  const loading = await bot.sendMessage(chatId, "⏳ Iniciando revisión de precios...");
+  try {
+    await checkPrices();
+    await bot.editMessageText("✅ Revisión completada.", { 
+      chat_id: chatId, 
+      message_id: loading.message_id 
+    });
+  } catch (err) {
+    await bot.editMessageText("❌ Error durante la revisión.", { 
+      chat_id: chatId, 
+      message_id: loading.message_id 
+    });
+  }
+}
+```
+</Accordion>
+
+<Accordion title="list: Return to product list">
+```javascript
+} else if (data === "list") {
+  await dailySummary(chatId);
+}
+```
+</Accordion>
+
+<Accordion title="chart:: View price history chart">
+```javascript
+} else if (data.startsWith("chart:")) {
+  const url = data.substring("chart:".length);
+  await sendPriceChart(chatId, url);
+}
+```
+</Accordion>
+
+<Accordion title="edit_product: Show edit instructions">
+```javascript
+} else if (data.startsWith("edit_product:")) {
+  const urlToEdit = data.substring("edit_product:".length);
+  await bot.sendMessage(chatId, `✍🏻 Para editar la URL usa:\n\`/edit ${urlToEdit} [nueva_url]\``, { 
+    parse_mode: "Markdown" 
+  });
+}
+```
+</Accordion>
+
+<Accordion title="delete_product: Remove specific product">
+```javascript
+} else if (data.startsWith("delete_product:")) {
+  const urlToDelete = data.substring("delete_product:".length);
+  if (priceData[urlToDelete]) {
+    const title = priceData[urlToDelete].title || urlToDelete;
+    delete priceData[urlToDelete];
+    saveData();
+    await bot.sendMessage(chatId, `🗑️ *Producto eliminado:*\n${escapeMD(title)}`, { 
+      parse_mode: "Markdown" 
+    });
+  } else {
+    await bot.sendMessage(chatId, "❌ Producto no encontrado.");
+  }
+  await dailySummary(chatId);
+}
+```
+</Accordion>
+
+## Broadcasting Strategy
+
+The daily summary is sent to all registered chats sequentially:
+
+```javascript
+for (const chatId of chats) {
+  try {
+    await dailySummary(chatId);
+    await new Promise(r => setTimeout(r, 400));
+  } catch (err) {
+    console.error(`❌ Error enviando resumen a ${chatId}:`, err.message);
+  }
+}
+```
+
+<Note>
+A **400ms delay** between each chat prevents overwhelming Telegram's API and reduces the risk of rate limiting.
+</Note>
+
+## Error Handling
+
+If sending to a specific chat fails, the error is logged but doesn't stop other deliveries:
+
+```javascript
+} catch (err) {
+  console.error(`❌ Error enviando resumen a ${chatId}:`, err.message);
+}
+```
+
+This ensures maximum delivery success even if some chats are inaccessible (e.g., user blocked the bot).
+
+## Benefits of Daily Summaries
+
+<CardGroup cols={2}>
+  <Card title="Daily Engagement" icon="calendar-check">
+    Keeps users engaged with tracked products
+  </Card>
+  <Card title="Quick Access" icon="bolt">
+    One-click access to all product details
+  </Card>
+  <Card title="Bulk Actions" icon="list">
+    Easy management of multiple products
+  </Card>
+  <Card title="Price Awareness" icon="eye">
+    Daily reminder of tracked deals
+  </Card>
+</CardGroup>
+
+The daily summary transforms passive price tracking into an active monitoring experience, encouraging users to check their products regularly and take action on price drops.

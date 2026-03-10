@@ -1,80 +1,276 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: 'Quickstart'
+description: 'Get your Price Tracker Bot up and running in minutes'
 ---
 
-## Get started in three steps
+## Overview
 
-Get your documentation site running locally and make your first customization.
+The Price Tracker Bot is a Telegram bot that monitors Amazon product prices and sends you notifications when prices drop. This guide will help you get the bot running and tracking your first product.
 
-### Step 1: Set up your local environment
+<Steps>
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+### Create a Telegram Bot
 
-### Step 2: Deploy your changes
+Before you can run the bot, you need to create it with BotFather:
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+1. Open Telegram and search for **@BotFather**
+2. Start a chat and send `/newbot`
+3. Follow the prompts to choose a name and username for your bot
+4. BotFather will give you a **bot token** - save this for later
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+<Note>
+Your bot token looks like this: `123456789:ABCdefGhIjKlmNoPQRsTUVwxyZ`
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+Keep it secret! Anyone with this token can control your bot.
+</Note>
 
-### Step 3: Go live
+### Clone and Install
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+Download the bot code and install its dependencies:
 
-## Next steps
+```bash
+git clone https://github.com/your-username/price-tracker-bot.git
+cd price-tracker-bot
+npm install
+```
 
-Now that you have your docs running, explore these key features:
+This installs all required packages including:
+- `node-telegram-bot-api` - Telegram bot integration
+- `playwright` - Web scraping engine
+- `node-cron` - Automated price checking
+- `dotenv` - Environment configuration
+
+<Warning>
+Playwright will download Chromium browser (~100MB) during installation. This is normal and required for price scraping.
+</Warning>
+
+### Configure Your Bot Token
+
+Create a `.env` file in the project root and add your bot token:
+
+```bash .env
+TELEGRAM_TOKEN=your_bot_token_here
+```
+
+<CodeGroup>
+
+```bash Terminal
+# Create .env file quickly
+echo "TELEGRAM_TOKEN=123456789:ABCdefGhIjKlmNoPQRsTUVwxyZ" > .env
+```
+
+```env .env
+TELEGRAM_TOKEN=123456789:ABCdefGhIjKlmNoPQRsTUVwxyZ
+```
+
+</CodeGroup>
+
+### Start the Bot
+
+Launch the bot with:
+
+```bash
+npm start
+```
+
+You should see:
+
+```
+✅ Datos cargados. Productos: 0, Chats: 0
+🚀 Bot iniciado. Esperando comandos...
+```
+
+<Tip>
+The bot runs in watch mode, so it will automatically restart when you modify the code.
+</Tip>
+
+### Start Using the Bot
+
+Open Telegram and find your bot by searching for its username. Send the `/start` command:
+
+```
+/start
+```
+
+You'll receive a welcome message with all available commands:
+
+```
+🤖 ¡Hola! Soy tu bot rastreador de precios.
+
+*Comandos:*
+📦 /add [url] - Añadir producto
+🔍 /check - Revisar precios ahora
+📝 /list - Ver productos en seguimiento
+🗑️ /remove [url] - Eliminar producto
+✏️ /edit [url_actual] [url_nueva] - Actualizar URL del producto
+📊 /stats - Ver estadísticas
+📈 /chart [url] - Ver gráfico del historial
+❓ /help - Mostrar ayuda
+```
+
+### Track Your First Product
+
+Copy any Amazon product URL and send it with the `/add` command:
+
+```
+/add https://www.amazon.com/dp/B08N5WRWNW
+```
+
+The bot will:
+1. Scrape the product page for title, price, and image
+2. Save it to `prices.json`
+3. Start monitoring it for price changes
+
+<Note>
+The bot sanitizes URLs by removing tracking parameters and query strings. It stores products by their clean URL (e.g., `https://www.amazon.com/dp/B08N5WRWNW`).
+</Note>
+
+You'll receive a confirmation:
+
+```
+✅ Producto agregado exitosamente
+
+📦 [Product Title]
+💰 Precio actual: $XX.XX
+📅 Agregado: [Date]
+
+🔔 Te notificaré cuando baje el precio.
+```
+
+</Steps>
+
+## How Price Monitoring Works
+
+Once you've added products, the bot automatically:
 
 <CardGroup cols={2}>
 
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
+<Card title="Every 2 Hours" icon="clock">
+Checks all tracked products for price changes using the automated cron job defined in `index.mjs:732`
 </Card>
 
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
+<Card title="Daily at 20:00" icon="calendar">
+Sends you a summary of all tracked products with interactive buttons to view details
 </Card>
 
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
+<Card title="Instant Alerts" icon="bell">
+Notifies you immediately when any product's price drops below its previous recorded price
 </Card>
 
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
+<Card title="Price History" icon="chart-line">
+Stores up to 120 price points per product for historical analysis and charting
 </Card>
 
 </CardGroup>
 
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+## Example: Price Drop Notification
+
+When a price drops, you'll receive:
+
+```
+🚨 ¡Precio reducido!
+
+*[Product Title]*
+
+💰 Precio anterior: $99.99
+🎯 Precio actual: $79.99
+💵 Ahorro: $20.00 (20.0% menos)
+📉 Histórico más bajo: $79.99
+
+[Ver en Amazon](url)
+```
+
+## Quick Commands Reference
+
+| Command | Description | Example |
+|---------|-------------|----------|
+| `/add [url]` | Track a new product | `/add https://amazon.com/dp/B08N5WRWNW` |
+| `/list` | View all tracked products | `/list` |
+| `/check` | Force price check now | `/check` |
+| `/remove [url]` | Stop tracking a product | `/remove https://amazon.com/dp/B08N5WRWNW` |
+| `/stats` | View tracking statistics | `/stats` |
+| `/chart [url]` | View price history chart | `/chart https://amazon.com/dp/B08N5WRWNW` |
+
+## Data Storage
+
+The bot stores all data in `prices.json` in the project root:
+
+```json
+{
+  "products": {
+    "https://www.amazon.com/dp/XXXXX": {
+      "url": "https://www.amazon.com/dp/XXXXX",
+      "title": "Product Name",
+      "price": 79.99,
+      "lowestPrice": 79.99,
+      "imageUrl": "https://...",
+      "addedDate": "2024-03-10T...",
+      "lastChecked": "2024-03-10T...",
+      "history": [
+        {"date": "2024-03-10T...", "price": 99.99},
+        {"date": "2024-03-10T...", "price": 79.99}
+      ]
+    }
+  },
+  "chats": [123456789]
+}
+```
+
+<Tip>
+You can backup `prices.json` to preserve your tracking history. The bot creates it automatically if it doesn't exist.
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+
+<Card title="Installation Details" icon="download" href="/installation">
+Learn about system requirements and advanced configuration
+</Card>
+
+<Card title="View Source Code" icon="code" href="https://github.com/your-repo">
+Explore the code on GitHub
+</Card>
+
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+
+<Accordion title="Bot doesn't respond to commands">
+Make sure:
+1. The bot is running (`npm start` in terminal)
+2. You sent `/start` to register your chat
+3. The `TELEGRAM_TOKEN` is correct in `.env`
+</Accordion>
+
+<Accordion title="Error: TELEGRAM_TOKEN not defined">
+You need to create a `.env` file with your bot token:
+
+```bash
+echo "TELEGRAM_TOKEN=your_token_here" > .env
+```
+
+Then restart the bot.
+</Accordion>
+
+<Accordion title="Product scraping fails">
+This can happen if:
+- Amazon changed their page structure
+- The URL is invalid
+- Network/firewall blocking Playwright
+
+Try with a different Amazon product URL. The scraper uses multiple CSS selectors defined in `index.mjs:80-109`.
+</Accordion>
+
+<Accordion title="Chromium download fails during install">
+Playwright needs to download Chromium. If it fails:
+
+```bash
+# Install Playwright browsers manually
+npx playwright install chromium
+```
+</Accordion>
+
+</AccordionGroup>

@@ -1,0 +1,331 @@
+---
+title: /check Command
+description: Manually trigger an immediate price check for all tracked products
+---
+
+## Overview
+
+The `/check` command forces an immediate price check for all products in your tracking list. This is useful when you want to see current prices without waiting for the automatic 2-hour check cycle.
+
+## Syntax
+
+```bash
+/check
+```
+
+<Note>
+This command takes no parameters and checks all tracked products.
+</Note>
+
+## How It Works
+
+When you run `/check`, the bot:
+
+1. **Launches Browser** - Starts a headless Chromium instance
+2. **Iterates Products** - Loops through all tracked products
+3. **Scrapes Prices** - Fetches current price for each product
+4. **Updates Database** - Saves new prices and updates history
+5. **Detects Changes** - Identifies any price drops
+6. **Sends Notifications** - Alerts you about price reductions
+7. **Confirms Completion** - Sends a summary message
+
+<Warning>
+Price checking can take 30-60 seconds or more depending on how many products you're tracking. Be patient!
+</Warning>
+
+## Example Usage
+
+### Manual Check
+
+```bash
+/check
+```
+
+**Bot Response (Initial):**
+```
+⏳ Revisando precios de todos los productos... (esto puede tardar)
+```
+
+**Bot Response (After Completion):**
+```
+✅ Revisión completada. Si hubo cambios, los notifiqué.
+```
+
+## Price Drop Notification
+
+If a price drop is detected during the check, you'll receive a notification:
+
+```
+🚨 ¡Precio reducido!
+
+Apple AirPods Pro (2nd Generation)
+
+💰 Precio anterior: $249.99
+🎯 Precio actual: $229.99
+💵 Ahorro: $20.00 (8.0% menos)
+📉 Histórico más bajo: $229.99
+
+[Ver en Amazon]
+[🛒 Ver en Amazon]
+```
+
+<Tip>
+If the product has an image, the notification will be sent as a photo with the details as a caption.
+</Tip>
+
+## Notification Details
+
+Price drop alerts include:
+
+<ParamField path="title" type="string">
+  Product name
+</ParamField>
+
+<ParamField path="precio anterior" type="number">
+  Previous price (before this check)
+</ParamField>
+
+<ParamField path="precio actual" type="number">
+  New lower price
+</ParamField>
+
+<ParamField path="ahorro" type="number">
+  Savings amount in dollars and percentage
+</ParamField>
+
+<ParamField path="histórico más bajo" type="number">
+  Lowest price ever recorded for this product
+</ParamField>
+
+## Code Implementation
+
+The `/check` command is implemented in `index.mjs:470-486`:
+
+```javascript index.mjs
+bot.onText(/\/check/, async (msg) => {
+  const chatId = msg.chat.id;
+  const loading = await bot.sendMessage(chatId, "⏳ Revisando precios de todos los productos... (esto puede tardar)");
+  try {
+    await checkPrices();
+    await bot.editMessageText("✅ Revisión completada. Si hubo cambios, los notifiqué.", {
+      chat_id: chatId,
+      message_id: loading.message_id
+    });
+  } catch (err) {
+    console.error("❌ Error en /check:", err.message);
+    await bot.editMessageText("❌ Ocurrió un error durante la revisión.", {
+      chat_id: chatId,
+      message_id: loading.message_id
+    });
+  }
+});
+```
+
+## The checkPrices() Function
+
+The core price checking logic is in `index.mjs:138-250`:
+
+```javascript index.mjs
+async function checkPrices() {
+  const keys = Object.keys(priceData);
+  if (!keys.length) {
+    console.log("ℹ️ No hay productos para revisar.");
+    return;
+  }
+
+  console.log("⏳ Iniciando revisión de precios...");
+
+  const browser = await chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  const productsChanged = [];
+  const errors = [];
+
+  for (const key of keys) {
+    const stored = priceData[key];
+    if (!stored) continue;
+
+    const sourceUrl = stored.url || key;
+    const sanitized = sanitizeAmazonURL(sourceUrl);
+
+    const scraped = await scrapeProduct(page, sanitized);
+    if (scraped.error) {
+      errors.push(`Error en ${stored.title || key}: ${scraped.error}`);
+      stored.lastChecked = new Date().toISOString();
+      priceData[key] = stored;
+      await new Promise((r) => setTimeout(r, 800));
+      continue;
+    }
+
+    const originalPrice = typeof stored.price === "number" ? stored.price : scraped.price;
+    const originalLowest = typeof stored.lowestPrice === "number" ? stored.lowestPrice : scraped.price;
+
+    const updated = {
+      url: sanitized,
+      title: scraped.title,
+      price: scraped.price,
+      imageUrl: scraped.imageUrl || stored.imageUrl || null,
+      lastChecked: new Date().toISOString(),
+      addedDate: stored.addedDate || new Date().toISOString(),
+      addedBy: stored.addedBy || null,
+      lowestPrice: Math.min(scraped.price, originalLowest),
+      history: Array.isArray(stored.history) ? stored.history.slice() : []
+    };
+
+    // Always append history
+    updated.history.push({ date: new Date().toISOString(), price: scraped.price });
+    if (updated.history.length > HISTORY_LIMIT) updated.history = updated.history.slice(-HISTORY_LIMIT);
+
+    // Detect price drop
+    if (scraped.price < originalPrice) {
+      const diff = (originalPrice - scraped.price).toFixed(2);
+      const pct = (((originalPrice - scraped.price) / originalPrice) * 100).toFixed(1);
+
+      const msg = `🚨 ¡Precio reducido!\n\n*${escapeMD(updated.title)}*\n\n💰 Precio anterior: $${originalPrice}\n🎯 Precio actual: $${scraped.price}\n💵 Ahorro: $${diff} (${pct}% menos)\n📉 Histórico más bajo: $${updated.lowestPrice}\n\n[Ver en Amazon](${sanitized})`;
+
+      productsChanged.push({ url: sanitized, message: msg, imageUrl: updated.imageUrl });
+    }
+
+    priceData[finalKey] = updated;
+    if (finalKey !== key) delete priceData[key];
+
+    await new Promise((r) => setTimeout(r, 900));
+  }
+
+  await browser.close();
+  saveData();
+
+  // Notify chats about changes
+  if (productsChanged.length) {
+    console.log(`🎉 ${productsChanged.length} productos cambiados — notificando a ${chats.size} chats.`);
+    for (const chatId of chats) {
+      for (const p of productsChanged) {
+        try {
+          if (p.imageUrl) {
+            await bot.sendPhoto(chatId, p.imageUrl, {
+              caption: p.message,
+              parse_mode: "Markdown",
+              reply_markup: { inline_keyboard: [[{ text: "🛒 Ver en Amazon", url: p.url }]] }
+            });
+          } else {
+            await bot.sendMessage(chatId, p.message, {
+              parse_mode: "Markdown",
+              reply_markup: { inline_keyboard: [[{ text: "🛒 Ver en Amazon", url: p.url }]] }
+            });
+          }
+        } catch (err) {
+          console.error(`❌ Error enviando notificación a ${chatId}:`, err.message);
+        }
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    }
+  } else {
+    console.log("ℹ️ No se detectaron bajadas de precio en esta pasada.");
+  }
+
+  if (errors.length) console.warn("⚠️ Errores durante la revisión:", errors);
+}
+```
+
+## Price History Tracking
+
+Every price check appends a new entry to the product's history:
+
+```javascript
+updated.history.push({ date: new Date().toISOString(), price: scraped.price });
+if (updated.history.length > HISTORY_LIMIT) updated.history = updated.history.slice(-HISTORY_LIMIT);
+```
+
+<Note>
+The history is limited to the last 120 entries to prevent excessive storage usage.
+</Note>
+
+## Automatic Price Checks
+
+The bot automatically runs price checks every 2 hours using a cron job:
+
+```javascript index.mjs
+cron.schedule("0 */2 * * *", async () => {
+  console.log("🔄 Cron: revisión automática de precios...");
+  try {
+    await checkPrices();
+  } catch (err) {
+    console.error("❌ Error en cron checkPrices:", err.message);
+  }
+});
+```
+
+## Error Handling
+
+If an error occurs during the check:
+
+```
+❌ Ocurrió un error durante la revisión.
+```
+
+Common causes:
+- Network connectivity issues
+- Amazon blocking requests (rate limiting)
+- Invalid product URLs
+- Browser launch failures
+
+<Warning>
+Even if some products fail to scrape, the check continues for remaining products. Errors are logged but don't stop the entire process.
+</Warning>
+
+## Performance Considerations
+
+### Timing
+
+- Each product takes ~1-2 seconds to scrape
+- 900ms delay between products to avoid rate limiting
+- Total time = (number of products × 2 seconds) approximately
+
+### Example Times
+
+| Products | Approximate Time |
+|----------|------------------|
+| 5        | ~10 seconds      |
+| 10       | ~20 seconds      |
+| 25       | ~50 seconds      |
+| 50       | ~100 seconds     |
+
+<Tip>
+For large product lists (50+), consider running `/check` during off-peak hours to avoid timeouts.
+</Tip>
+
+## Use Cases
+
+### Before Making a Purchase
+
+Check prices right before buying:
+```bash
+/check
+```
+
+Ensure you're getting the best current price.
+
+### After Adding New Products
+
+Verify immediate tracking:
+```bash
+/add https://amazon.com/...
+/check
+```
+
+### During Sales Events
+
+Monitor Black Friday / Prime Day deals:
+```bash
+/check
+```
+
+Run multiple times during the sale period.
+
+## Related Commands
+
+- [/add](/commands/add) - Add products to track
+- [/list](/commands/list) - View all tracked products
+- [/stats](/commands/stats) - See overall statistics
+- [/chart](/commands/chart) - Visualize price history

@@ -1,0 +1,262 @@
+---
+title: 'Price Drop Alerts'
+description: 'Real-time notifications when product prices decrease'
+---
+
+## Overview
+
+The alert system automatically notifies all registered users when a tracked product's price drops. Alerts are sent via Telegram with rich formatting, product images, and direct links to Amazon.
+
+## When Alerts Trigger
+
+Alerts are triggered when the **current scraped price** is **lower than the previously stored price**:
+
+```javascript
+// Detect price drop compared to stored.price (originalPrice)
+if (scraped.price < originalPrice) {
+  const diff = (originalPrice - scraped.price).toFixed(2);
+  const pct = (((originalPrice - scraped.price) / originalPrice) * 100).toFixed(1);
+
+  const msg = `🚨 ¡Precio reducido!
+
+*${escapeMD(updated.title)}*
+
+💰 Precio anterior: $${originalPrice}
+🎯 Precio actual: $${scraped.price}
+💵 Ahorro: $${diff} (${pct}% menos)
+📉 Histórico más bajo: $${updated.lowestPrice}
+
+[Ver en Amazon](${sanitized})`;
+
+  productsChanged.push({ url: sanitized, message: msg, imageUrl: updated.imageUrl });
+}
+```
+
+<Note>
+Only **price drops** trigger alerts. Price increases are tracked but don't generate notifications.
+</Note>
+
+## Alert Message Format
+
+### With Product Image
+
+When the product has an image URL, alerts are sent as photo messages:
+
+```javascript
+if (p.imageUrl) {
+  await bot.sendPhoto(chatId, p.imageUrl, {
+    caption: p.message,
+    parse_mode: "Markdown",
+    reply_markup: { 
+      inline_keyboard: [[{ text: "🛒 Ver en Amazon", url: p.url }]] 
+    }
+  });
+}
+```
+
+### Example Alert Message
+
+```
+🚨 ¡Precio reducido!
+
+*Apple AirPods Pro (2nd Generation)*
+
+💰 Precio anterior: $249.99
+🎯 Precio actual: $199.99
+💵 Ahorro: $50.00 (20.0% menos)
+📉 Histórico más bajo: $189.99
+
+[Ver en Amazon](https://www.amazon.com/dp/B0CHWRXH8B)
+```
+
+<CardGroup cols={2}>
+  <Card title="Previous Price" icon="dollar-sign">
+    Shows the last known price before the drop
+  </Card>
+  <Card title="Current Price" icon="tag">
+    Displays the new, lower price
+  </Card>
+  <Card title="Savings" icon="piggy-bank">
+    Calculates both dollar amount and percentage saved
+  </Card>
+  <Card title="Historical Low" icon="chart-line">
+    Shows the lowest price ever recorded
+  </Card>
+</CardGroup>
+
+## Multi-Chat Broadcasting
+
+When a price drop is detected, the alert is broadcast to **all registered chats**:
+
+```javascript
+// Notify chats about changes
+if (productsChanged.length) {
+  console.log(`🎉 ${productsChanged.length} productos cambiados — notificando a ${chats.size} chats.`);
+  
+  for (const chatId of chats) {
+    for (const p of productsChanged) {
+      try {
+        if (p.imageUrl) {
+          await bot.sendPhoto(chatId, p.imageUrl, {
+            caption: p.message,
+            parse_mode: "Markdown",
+            reply_markup: { inline_keyboard: [[{ text: "🛒 Ver en Amazon", url: p.url }]] }
+          });
+        } else {
+          await bot.sendMessage(chatId, p.message, {
+            parse_mode: "Markdown",
+            reply_markup: { inline_keyboard: [[{ text: "🛒 Ver en Amazon", url: p.url }]] }
+          });
+        }
+      } catch (err) {
+        console.error(`❌ Error enviando notificación a ${chatId}:`, err.message);
+      }
+      // small pause between messages
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+} else {
+  console.log("ℹ️ No se detectaron bajadas de precio en esta pasada.");
+}
+```
+
+<Info>
+A **500ms delay** is added between each notification to avoid rate limiting by Telegram's API.
+</Info>
+
+## Chat Registration
+
+Users are automatically registered when they:
+
+1. Send the `/start` command
+2. Send any message to the bot
+
+```javascript
+// Auto-register chats on any message (only once)
+bot.on("message", (msg) => {
+  const chatId = msg.chat.id;
+  if (!chats.has(chatId)) {
+    chats.add(chatId);
+    saveData();
+    console.log(`🎉 Nuevo chat registrado (por mensaje): ${chatId}`);
+  }
+});
+```
+
+Registered chats are persisted in `prices.json`:
+
+```javascript
+{
+  "products": { ... },
+  "chats": [123456789, 987654321]
+}
+```
+
+## Markdown Escaping
+
+To ensure proper Telegram formatting, special characters are escaped:
+
+```javascript
+// Escape for Markdown (basic). This function escapes characters that break Markdown.
+function escapeMD(text = "") {
+  return String(text).replace(/([_*[\]()~`>#+\-=|{}.!])/g, "\\$1");
+}
+```
+
+This prevents product titles with special characters from breaking the message formatting.
+
+## Inline Buttons
+
+Each alert includes an inline button for quick access to the product:
+
+```javascript
+reply_markup: { 
+  inline_keyboard: [[{ text: "🛒 Ver en Amazon", url: p.url }]] 
+}
+```
+
+<Tip>
+Clicking the button opens the product page directly in the user's browser.
+</Tip>
+
+## Alert Frequency
+
+<Accordion title="When are alerts sent?">
+Alerts are sent in two scenarios:
+
+1. **Automated checks**: Every 2 hours via cron job
+2. **Manual checks**: When a user runs `/check` command
+
+```javascript
+// Check prices every 2 hours
+cron.schedule("0 */2 * * *", async () => {
+  console.log("🔄 Cron: revisión automática de precios...");
+  try {
+    await checkPrices();
+  } catch (err) {
+    console.error("❌ Error en cron checkPrices:", err.message);
+  }
+});
+```
+
+The `checkPrices()` function automatically sends alerts when price drops are detected.
+</Accordion>
+
+## Error Handling
+
+If sending an alert fails, the error is logged but doesn't stop other notifications:
+
+```javascript
+try {
+  await bot.sendPhoto(chatId, p.imageUrl, { ... });
+} catch (err) {
+  console.error(`❌ Error enviando notificación a ${chatId}:`, err.message);
+}
+```
+
+<Note>
+Failed notifications to one chat don't affect alerts to other registered users.
+</Note>
+
+## No Duplicate Alerts
+
+The system prevents duplicate alerts by only triggering when `scraped.price < originalPrice`. Once an alert is sent, the new lower price becomes the comparison baseline for future checks.
+
+### Example Flow
+
+1. Product price: **$100** (stored)
+2. Next check finds: **$80** → **Alert sent** ✅
+3. New stored price: **$80**
+4. Next check finds: **$80** → No alert (price unchanged)
+5. Next check finds: **$75** → **Alert sent** ✅
+
+## Testing Alerts
+
+Use the `/check` command to immediately test the alert system:
+
+```
+/check
+```
+
+Response:
+```
+⏳ Revisando precios de todos los productos... (esto puede tardar)
+✅ Revisión completada. Si hubo cambios, los notifiqué.
+```
+
+If price drops are detected during the check, alerts will be sent automatically.
+
+## Fallback Without Images
+
+Some products may not have images. In this case, alerts are sent as text-only messages:
+
+```javascript
+} else {
+  await bot.sendMessage(chatId, p.message, {
+    parse_mode: "Markdown",
+    reply_markup: { inline_keyboard: [[{ text: "🛒 Ver en Amazon", url: p.url }]] }
+  });
+}
+```
+
+The message format remains the same, just without the visual element.

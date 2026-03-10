@@ -1,0 +1,133 @@
+---
+title: "Introduction"
+description: "Welcome to Price Tracker Bot - your automated Amazon price monitoring assistant"
+---
+
+## What is Price Tracker Bot?
+
+Price Tracker Bot is a Telegram bot that automatically monitors Amazon product prices and sends you instant notifications when prices drop. Never miss a deal again by tracking your favorite products and getting alerted the moment they go on sale.
+
+<CardGroup cols={2}>
+  <Card title="Automated Tracking" icon="chart-line" iconType="solid">
+    Monitor unlimited Amazon products with automatic price checks every 2 hours
+  </Card>
+  <Card title="Instant Alerts" icon="bell" iconType="solid">
+    Get notified immediately via Telegram when any tracked product drops in price
+  </Card>
+  <Card title="Price History" icon="clock-rotate-left" iconType="solid">
+    View detailed price history charts and track the lowest price ever recorded
+  </Card>
+  <Card title="Easy Management" icon="list-check" iconType="solid">
+    Add, remove, and manage products directly from Telegram with simple commands
+  </Card>
+</CardGroup>
+
+## Key Features
+
+<AccordionGroup>
+  <Accordion title="Real-time Price Monitoring" icon="magnifying-glass-chart">
+    The bot automatically checks prices every 2 hours using advanced web scraping technology powered by Playwright. You'll never miss a price drop.
+  </Accordion>
+
+  <Accordion title="Smart Notifications" icon="message-bot">
+    Receive instant Telegram messages with product details, price comparisons, and savings calculations whenever a tracked item's price decreases.
+  </Accordion>
+
+  <Accordion title="Interactive Interface" icon="grid-2">
+    Manage your tracked products through an intuitive Telegram interface with inline buttons for quick actions like viewing details, editing URLs, or removing items.
+  </Accordion>
+
+  <Accordion title="Daily Summaries" icon="calendar-day">
+    Get a comprehensive daily report at 8 PM showing all your tracked products with their current prices and status.
+  </Accordion>
+
+  <Accordion title="Price Analytics" icon="chart-mixed">
+    Generate visual price history charts to analyze trends and make informed purchase decisions based on historical data.
+  </Accordion>
+
+  <Accordion title="Multi-Chat Support" icon="users">
+    Use the bot across multiple Telegram chats with persistent data storage that keeps your tracked products synced everywhere.
+  </Accordion>
+</AccordionGroup>
+
+## How It Works
+
+<Steps>
+  <Step title="Add the bot to Telegram">
+    Search for your deployed bot on Telegram and start a conversation with the `/start` command.
+  </Step>
+  
+  <Step title="Add products to track">
+    Send the bot any Amazon product URL using the `/add` command, and it will immediately fetch the current price and details.
+  </Step>
+  
+  <Step title="Receive automatic alerts">
+    The bot monitors your products every 2 hours. When a price drops, you'll get an instant notification with the savings amount and percentage.
+  </Step>
+  
+  <Step title="View analytics and manage">
+    Use commands like `/list`, `/stats`, and `/chart` to view your tracked products, see statistics, and analyze price trends.
+  </Step>
+</Steps>
+
+## Quick Start
+
+Ready to start tracking prices? Get up and running in just a few minutes:
+
+<Card title="Quickstart Guide" icon="rocket" href="/quickstart">
+  Follow our step-by-step guide to set up the bot and start tracking your first product
+</Card>
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Deal Hunter" icon="bullseye">
+    Track high-ticket items and wait for the perfect time to buy when prices drop
+  </Card>
+  <Card title="Gift Shopper" icon="gift">
+    Monitor products on your gift list and purchase when they go on sale
+  </Card>
+  <Card title="Budget Manager" icon="wallet">
+    Set up tracking for household essentials and stock up during price drops
+  </Card>
+  <Card title="Reseller" icon="store">
+    Track product prices for inventory management and profit optimization
+  </Card>
+</CardGroup>
+
+## Why Price Tracker Bot?
+
+<Note>
+Price Tracker Bot is designed to save you time and money by automating the tedious task of manually checking product prices. With smart notifications and detailed analytics, you'll always know the best time to buy.
+</Note>
+
+### Built with Modern Technology
+
+The bot leverages cutting-edge technologies to provide reliable price tracking:
+
+- **Node.js** - Fast and efficient runtime for real-time operations
+- **Telegram Bot API** - Seamless integration with Telegram for instant notifications
+- **Playwright** - Robust web scraping that works reliably with Amazon's dynamic pages
+- **node-cron** - Scheduled tasks for automatic price monitoring
+- **Persistent Storage** - Your tracked products are saved locally and never lost
+
+<Tip>
+The bot stores all price history data locally in `prices.json`, allowing you to maintain a complete record of price changes over time for better decision-making.
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installation Guide" icon="download" href="/installation">
+    Set up your own instance of the bot on your server
+  </Card>
+  <Card title="Command Reference" icon="terminal" href="/commands/overview">
+    Learn all available commands and how to use them
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/setup">
+    Customize the bot's behavior and scheduling
+  </Card>
+  <Card title="Technical Architecture" icon="sitemap" href="/technical/architecture">
+    Understand how the bot works under the hood
+  </Card>
+</CardGroup>
