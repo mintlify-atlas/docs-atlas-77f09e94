@@ -1,0 +1,88 @@
+{
+  "projectType": "saas",
+  "projectName": "Price Tracker Bot",
+  "projectDescription": "A Telegram bot that monitors Amazon product prices and sends alerts when prices drop",
+  "theme": "almond",
+  "primaryColor": "#0088cc",
+  "lightColor": "#54a9eb",
+  "darkColor": "#006699",
+  "navigation": {
+    "groups": [
+      {
+        "group": "Getting Started",
+        "pages": [
+          "introduction",
+          "quickstart",
+          "installation"
+        ]
+      },
+      {
+        "group": "Features",
+        "pages": [
+          "features/price-tracking",
+          "features/alerts",
+          "features/charts",
+          "features/daily-summary"
+        ]
+      },
+      {
+        "group": "Commands",
+        "pages": [
+          "commands/overview",
+          "commands/add",
+          "commands/list",
+          "commands/check",
+          "commands/remove",
+          "commands/edit",
+          "commands/stats",
+          "commands/chart"
+        ]
+      },
+      {
+        "group": "Configuration",
+        "pages": [
+          "configuration/setup",
+          "configuration/environment-variables",
+          "configuration/scheduling"
+        ]
+      },
+      {
+        "group": "Technical Details",
+        "pages": [
+          "technical/architecture",
+          "technical/data-storage",
+          "technical/web-scraping"
+        ]
+      },
+      {
+        "group": "Support",
+        "pages": [
+          "support/troubleshooting",
+          "support/faq",
+          "support/contributing"
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Automated Amazon price monitoring",
+    "Instant price drop notifications via Telegram",
+    "Interactive product management with inline buttons",
+    "Price history charts and analytics",
+    "Daily summary reports",
+    "Multi-chat support with persistent data storage",
+    "Scheduled price checks every 2 hours",
+    "Lowest price tracking for each product"
+  ],
+  "publicApiSurface": [
+    "/start - Show welcome message and command list",
+    "/add [URL] - Add Amazon product to tracking list",
+    "/list - View all tracked products with interactive menu",
+    "/check - Manually trigger price check for all products",
+    "/remove [URL] - Remove product from tracking",
+    "/edit [old_url] [new_url] - Update product URL",
+    "/stats - View tracking statistics and savings",
+    "/chart [URL] - Generate price history chart",
+    "/help - Display command guide"
+  ]
+}
